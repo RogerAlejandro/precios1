@@ -18,21 +18,44 @@ SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Utilidades ---
+def get_fakestore_categories():
+    """Obtiene las categorías disponibles en FakeStore API"""
+    try:
+        response = requests.get("https://fakestoreapi.com/products/categories")
+        if response.status_code == 200:
+            return response.json()
+    except Exception:
+        pass
+    return ["electronics", "jewelery", "men's clothing", "women's clothing"]
+
 def search_fakestore(query):
     """Busca productos en FakeStore API"""
     try:
-        response = requests.get(f"https://fakestoreapi.com/products")
+        # Primero intentamos buscar por categoría
+        categories = get_fakestore_categories()
+        query_lower = query.lower()
+        
+        # Verificar si la búsqueda coincide con alguna categoría
+        matching_category = next((cat for cat in categories if query_lower in cat.lower()), None)
+        
+        if matching_category:
+            # Si coincide con una categoría, obtener productos de esa categoría
+            response = requests.get(f"https://fakestoreapi.com/products/category/{matching_category}")
+        else:
+            # Si no, buscar en todos los productos
+            response = requests.get("https://fakestoreapi.com/products")
+            
         if response.status_code == 200:
             products = response.json()
-            # Filtrar productos que coincidan con la búsqueda (título o descripción)
-            query = query.lower()
-            filtered = [
-                p for p in products 
-                if query in p.get('title', '').lower() or 
-                   query in p.get('description', '').lower() or
-                   query in p.get('category', '').lower()
-            ]
-            return filtered
+            # Si no es búsqueda por categoría, filtrar por título o descripción
+            if not matching_category:
+                products = [
+                    p for p in products 
+                    if (query_lower in p.get('title', '').lower() or 
+                        query_lower in p.get('description', '').lower() or
+                        query_lower in p.get('category', '').lower())
+                ]
+            return products
     except Exception as e:
         st.error(f"Error al buscar en FakeStore: {str(e)}")
     return []
@@ -44,22 +67,40 @@ def save_to_supabase(products):
     
     for product in products:
         try:
-            # Verificar si el producto ya existe
-            existing = supabase.table("products").select("id").eq("external_id", f"fakestore_{product['id']}").execute()
+            # Verificar si el producto ya existe por nombre
+            existing = supabase.table("products")\
+                        .select("id")\
+                        .eq("name", product['title'])\
+                        .execute()
             
             if not existing.data:
                 # Insertar nuevo producto
-                supabase.table("products").insert({
+                new_product = {
                     "name": product['title'],
                     "description": product.get('description', ''),
-                    "price": product['price'],
+                    "price": float(product['price']),  # Asegurar que sea float
                     "category": product.get('category', ''),
                     "image_url": product.get('image', ''),
-                    "external_id": f"fakestore_{product['id']}",
                     "created_at": datetime.now().isoformat()
-                }).execute()
+                }
+                
+                # Insertar en Supabase
+                result = supabase.table("products").insert(new_product).execute()
+                if hasattr(result, 'error') and result.error:
+                    st.error(f"Error al guardar: {result.error}")
+                else:
+                    st.success(f"¡{product['title']} agregado correctamente!")
+                    st.rerun()
+            else:
+                st.info(f"El producto {product['title']} ya existe en la base de datos")
+                
         except Exception as e:
-            st.error(f"Error al guardar producto en Supabase: {str(e)}")
+            st.error(f"Error al guardar producto: {str(e)}")
+            # Mostrar más detalles del error para depuración
+            if hasattr(e, 'message'):
+                st.json(e.message)
+            elif hasattr(e, 'args') and e.args:
+                st.json(e.args[0])
 
 def get_products():
     res = supabase.table("products").select("*").execute()
@@ -106,6 +147,8 @@ if st.sidebar.button("🏠 Inicio"):
     selected = "-- Todos --"
 else:
     st.sidebar.markdown("---")
+    st.sidebar.subheader("🔍 Búsqueda en FakeStore")
+    st.sidebar.caption("Sugerencias: electronics, jewelery, men's clothing, women's clothing")
     st.sidebar.subheader("Seleccionar o escribir producto")
     selected_from_list = st.sidebar.selectbox(
         "Producto existente", 
@@ -152,23 +195,59 @@ if selected_manual.strip() != "" and fakestore_results:
     st.subheader(f"Resultados de búsqueda para: {selected_manual}")
     
     # Mostrar resultados de FakeStore en la sección principal
-    cols = st.columns(3)  # 3 columnas para mostrar los productos
-    for idx, product in enumerate(fakestore_results):
-        with cols[idx % 3]:
-            st.image(
-                product.get('image', ''), 
-                width=200,
-                use_column_width=True
-            )
-            st.subheader(product['title'])
-            st.write(f"**Precio:** ${product['price']}")
-            st.caption(product.get('category', '').title())
-            st.write(product['description'][:100] + '...' if len(product['description']) > 100 else product['description'])
-            
-            if st.button(f"Agregar al comparador", key=f"add_{product['id']}"):
-                save_to_supabase([product])
-                st.success(f"¡{product['title']} agregado a la base de datos!")
-                st.rerun()
+    st.info(f"💡 Mostrando {len(fakestore_results)} resultados. Prueba con: electronics, jewelery, men's clothing, women's clothing")
+    
+    # Agrupar por categoría
+    products_by_category = {}
+    for product in fakestore_results:
+        category = product.get('category', 'Otros')
+        if category not in products_by_category:
+            products_by_category[category] = []
+        products_by_category[category].append(product)
+    
+    # Mostrar por categorías
+    for category, products in products_by_category.items():
+        st.subheader(f"📁 {category.title()}")
+        cols = st.columns(3)  # 3 columnas para mostrar los productos
+        
+        for idx, product in enumerate(products):
+            with cols[idx % 3]:
+                # Tarjeta de producto con borde usando columnas
+                col1, col2 = st.columns([1, 4])
+                
+                with col1:
+                    # Imagen
+                    st.image(
+                        product.get('image', ''), 
+                        width=100,
+                        use_column_width=True
+                    )
+                
+                with col2:
+                    # Título con límite de caracteres
+                    title = (product['title'][:30] + '...') if len(product['title']) > 30 else product['title']
+                    st.subheader(title, help=product['title'])  # Tooltip con título completo
+                    
+                    # Precio
+                    st.markdown(f"**Precio:** ${product['price']}")
+                    
+                    # Rating si está disponible
+                    if 'rating' in product and product['rating']:
+                        rating = product['rating']
+                        stars = '⭐' * int(rating.get('rate', 0))
+                        st.caption(f"{stars} ({rating.get('count', 0)} reseñas)")
+                    
+                    # Botón de acción
+                    if st.button(
+                        "➕ Agregar al comparador", 
+                        key=f"add_{product['id']}",
+                        use_container_width=True
+                    ):
+                        save_to_supabase([product])
+                        st.rerun()
+                
+                # Línea divisoria
+                st.markdown("---")
     
     st.markdown("---")
 elif selected == "-- Todos --":
