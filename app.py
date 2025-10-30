@@ -53,7 +53,11 @@ def generate_pdf(df):
 # --- UI ---
 st.title("💰 Comparador de Precios — Dashboard")
 
-# Sidebar: seleccionar o escribir producto
+# Sidebar: Home button and product selection
+if st.sidebar.button("🏠 Inicio"):
+    st.rerun()
+
+st.sidebar.markdown("---")
 products_df = get_products()
 product_options = products_df['name'].tolist() if not products_df.empty else []
 
@@ -106,9 +110,10 @@ if selected == "-- Todos --":
         st.dataframe(latest[["name","site_name","price","timestamp","url"]].rename(columns={"name":"Producto"}), use_container_width=True)
         st.subheader("Evolución (selecciona producto a la izquierda para ver gráfico)")
 else:
-    prod = products_df[products_df['name'] == selected].iloc[0] if selected in product_options else {}
+    prod_match = products_df[products_df['name'] == selected]
+    prod = prod_match.iloc[0] if not prod_match.empty else {}
     st.subheader(f"Historial de precios — {selected}")
-    hist = get_price_history(prod.get("id") if prod else None)
+    hist = get_price_history(prod.get("id") if not prod.empty else None)
     if hist.empty:
         st.warning("No hay datos de historial para este producto.")
     else:
