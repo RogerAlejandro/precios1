@@ -1,0 +1,15 @@
+# Entorno virtual
+venv/
+__pycache__/
+*.pyc
+
+# Archivos temporales
+*.log
+*.tmp
+
+# Configs locales
+#.streamlit/secrets.toml
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
