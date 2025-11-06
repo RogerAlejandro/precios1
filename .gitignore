@@ -1,5 +1,6 @@
 # Entorno virtual
 venv/
+entornito/
 __pycache__/
 *.pyc
 

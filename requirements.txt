@@ -2,9 +2,11 @@ streamlit
 requests
 beautifulsoup4
 pandas
+statsmodels>=0.14.5
 lxml
 selenium
 undetected-chromedriver
 webdriver-manager
-supabase-py==2.0.0
+supabase
+plotly>=5.0.0
 python-dotenv

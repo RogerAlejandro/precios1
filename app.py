@@ -194,41 +194,198 @@ def eliminar_producto(_supabase, producto_id):
         return False
 
 
-def actualizar_precio_producto(_supabase, producto_id, nuevo_precio):
-    if not _supabase:
+def actualizar_precio_producto(_supabase, producto):
+    """Actualiza el precio de un producto de manera rápida y confiable"""
+    if not _supabase or not isinstance(producto, dict) or 'id' not in producto:
+        st.error("❌ Datos de producto inválidos")
         return False
 
     try:
-        response = _supabase.table('productos')\
-            .select('precio_actual')\
-            .eq('id', producto_id)\
+        # Usar requests para obtener el HTML directamente (más rápido que Selenium)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        
+        st.info(f"🔍 Actualizando precio para: {producto['titulo'][:50]}...")
+        
+        # Obtener la página del producto
+        response = requests.get(producto['enlace'], headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Selectores actualizados para MercadoLibre
+        precio_selectors = [
+            {'selector': '.price-tag-fraction', 'attribute': 'text'},
+            {'selector': '.andes-money-amount__fraction', 'attribute': 'text'},
+            {'selector': '.ui-pdp-price__second-line .price-tag-fraction', 'attribute': 'text'},
+            {'selector': '.ui-pdp-price__part', 'attribute': 'text'},
+            {'selector': '[itemprop="price"]', 'attribute': 'content'}
+        ]
+        
+        # Buscar el precio usando los selectores
+        nuevo_precio = None
+        for item in precio_selectors:
+            element = soup.select_one(item['selector'])
+            if element:
+                try:
+                    if item['attribute'] == 'text':
+                        precio_texto = element.get_text(strip=True)
+                    else:
+                        precio_texto = element.get(item['attribute'], '')
+                    
+                    nuevo_precio = limpiar_precio(precio_texto)
+                    if nuevo_precio and nuevo_precio > 0:
+                        break
+                except:
+                    continue
+        
+        if not nuevo_precio or nuevo_precio <= 0:
+            st.warning("⚠️ No se pudo obtener el precio. Intenta nuevamente.")
+            # Guardar el HTML para depuración
+            with open(f"debug_price_{producto['id']}.html", "w", encoding="utf-8") as f:
+                f.write(soup.prettify())
+            return False
+        
+        # Redondear a 2 decimales
+        nuevo_precio = round(float(nuevo_precio), 2)
+        precio_anterior = round(float(producto.get('precio_actual', 0)), 2)
+        
+        # Actualizar en la base de datos
+        _supabase.table('productos')\
+            .update({
+                'precio_actual': nuevo_precio,
+                'updated_at': datetime.now().isoformat()
+            })\
+            .eq('id', producto['id'])\
             .execute()
+        
+        # Actualizar la hora de actualización del producto
+        _supabase.table('productos')\
+            .update({
+                'updated_at': datetime.now().isoformat()
+            })\
+            .eq('id', producto['id'])\
+            .execute()
+        
+        # Siempre registrar en el historial, incluso si el precio no cambió
+        _supabase.table('historial_precios')\
+            .insert({
+                'producto_id': producto['id'],
+                'precio': nuevo_precio,
+                'fecha_consulta': datetime.now().isoformat()
+            })\
+            .execute()
+        
+        # Mostrar el resultado
+        if abs(nuevo_precio - precio_anterior) < 0.01:
+            st.success(f"✅ Precio actual: ${nuevo_precio:,.2f} (registrado en historial)")
+        else:
+            st.success(f"✅ Precio actualizado: ${precio_anterior:,.2f} → ${nuevo_precio:,.2f}")
+        
+        return True
+        
+    except requests.RequestException as e:
+        st.error(f"❌ Error de conexión: {str(e)}")
+        return False
+    except Exception as e:
+        st.error(f"❌ Error inesperado: {str(e)}")
+        return False
+    """Actualiza el precio de un producto específico usando su enlace directo"""
+    if not _supabase or not isinstance(producto, dict) or 'id' not in producto:
+        st.error("❌ Datos de producto inválidos")
+        return False
 
-        if response.data:
-            precio_anterior = response.data[0]['precio_actual']
+    try:
+        # Si el producto tiene enlace de MercadoLibre
+        if 'enlace' in producto and 'mercadolibre' in producto.get('enlace', ''):
+            driver = None
+            try:
+                driver = setup_driver()
+                if not driver:
+                    st.error("❌ No se pudo inicializar el navegador")
+                    return False
 
-            _supabase.table('productos')\
-                .update({
-                    'precio_actual': nuevo_precio,
-                    'updated_at': datetime.now().isoformat()
-                })\
-                .eq('id', producto_id)\
-                .execute()
-
-            if abs(precio_anterior - nuevo_precio) > 0.01:
+                # Navegar directamente a la página del producto
+                st.info(f"🔍 Actualizando precio para: {producto['titulo'][:50]}...")
+                driver.get(producto['enlace'])
+                
+                # Esperar a que cargue la página
+                time.sleep(3)
+                
+                # Extraer el precio directamente
+                page_source = driver.page_source
+                soup = BeautifulSoup(page_source, 'html.parser')
+                
+                # Intentar diferentes selectores de precio
+                precio_selectors = [
+                    '.price-tag-fraction',  # Selector principal
+                    '.andes-money-amount__fraction',  # Selector alternativo
+                    '.price-tag-text-sr-only',  # Para accesibilidad
+                    '.ui-pdp-price__second-line'  # Otra variante
+                ]
+                
+                nuevo_precio = None
+                for selector in precio_selectors:
+                    precio_elem = soup.select_one(selector)
+                    if precio_elem:
+                        precio_texto = precio_elem.text.strip()
+                        nuevo_precio = limpiar_precio(precio_texto)
+                        if nuevo_precio and nuevo_precio > 0:
+                            break
+                
+                if not nuevo_precio or nuevo_precio <= 0:
+                    st.warning("⚠️ No se pudo obtener el precio. Revisando el HTML...")
+                    # Guardar HTML para depuración
+                    with open("debug_price_update.html", "w", encoding="utf-8") as f:
+                        f.write(soup.prettify())
+                    return False
+                
+                # Verificar si el precio cambió
+                precio_anterior = producto.get('precio_actual', 0)
+                if abs(nuevo_precio - precio_anterior) < 0.01:
+                    st.info("ℹ️ El precio no ha cambiado")
+                    return True
+                
+                # Actualizar en la base de datos
+                response = _supabase.table('productos')\
+                    .update({
+                        'precio_actual': nuevo_precio,
+                        'fecha_actualizacion': datetime.now().isoformat()
+                    })\
+                    .eq('id', producto['id'])\
+                    .execute()
+                
+                if not response.data:
+                    st.error("❌ Error al actualizar el producto")
+                    return False
+                
+                # Registrar en el historial
                 _supabase.table('historial_precios')\
                     .insert({
-                        'producto_id': producto_id,
+                        'producto_id': producto['id'],
                         'precio': nuevo_precio,
                         'fecha_consulta': datetime.now().isoformat()
                     })\
                     .execute()
-
-            return True
-        return False
+                
+                st.success(f"✅ Precio actualizado: ${precio_anterior:,.2f} → ${nuevo_precio:,.2f}")
+                return True
+                
+            except Exception as e:
+                st.error(f"❌ Error al actualizar el precio: {str(e)}")
+                return False
+            finally:
+                if driver:
+                    driver.quit()
+        else:
+            st.warning("⚠️ No se puede actualizar: enlace no compatible")
+            return False
+            
     except Exception as e:
-        st.error(f"Error actualizando precio: {e}")
+        st.error(f"❌ Error en actualizar_precio_producto: {str(e)}")
         return False
+
 
 # FUNCIONES DE SCRAPING ACTUALIZADAS
 
@@ -690,24 +847,9 @@ def main():
                 with col3:
                     if st.button("🔄 Actualizar", key=f"actualizar_{i}"):
                         with st.spinner("Actualizando precio..."):
-                            if producto['tienda'] == 'Mercado Libre':
-                                nuevos_resultados = buscar_mercado_libre_selenium(
-                                    producto.get('query_original', producto['titulo'][:30]))
-                            else:
-                                nuevos_resultados = buscar_ebay(producto.get(
-                                    'query_original', producto['titulo'][:30]))
-
-                            if nuevos_resultados:
-                                for nuevo in nuevos_resultados:
-                                    if (nuevo['enlace'] == producto['enlace'] or
-                                            nuevo['titulo'].lower() in producto['titulo'].lower()):
-
-                                        actualizar_precio_producto(
-                                            _supabase, producto['id'], nuevo['precio'])
-                                        st.success("✅ Precio actualizado!")
-                                        time.sleep(1)
-                                        st.rerun()
-                                        break
+                            if actualizar_precio_producto(_supabase, producto):
+                                time.sleep(1)
+                                st.rerun()
 
                 with col4:
                     if st.button("❌ Eliminar", key=f"eliminar_{i}"):
