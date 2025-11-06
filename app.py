@@ -1,292 +1,544 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-from supabase import create_client
-import plotly.express as px
 import requests
-from datetime import datetime
-from fpdf import FPDF
-from io import BytesIO
-import base64
+from bs4 import BeautifulSoup
+import pandas as pd
+import time
 import json
+import os
+from datetime import datetime
+import re
+import random
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import undetected_chromedriver as uc
+import warnings
+warnings.filterwarnings('ignore')
 
-st.set_page_config("Comparador de Precios", layout="wide")
-
-# --- Conexión a Supabase ---
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# --- Utilidades ---
-def get_fakestore_categories():
-    """Obtiene las categorías disponibles en FakeStore API"""
-    try:
-        response = requests.get("https://fakestoreapi.com/products/categories")
-        if response.status_code == 200:
-            return response.json()
-    except Exception:
-        pass
-    return ["electronics", "jewelery", "men's clothing", "women's clothing"]
-
-def search_fakestore(query):
-    """Busca productos en FakeStore API"""
-    try:
-        # Primero intentamos buscar por categoría
-        categories = get_fakestore_categories()
-        query_lower = query.lower()
-        
-        # Verificar si la búsqueda coincide con alguna categoría
-        matching_category = next((cat for cat in categories if query_lower in cat.lower()), None)
-        
-        if matching_category:
-            # Si coincide con una categoría, obtener productos de esa categoría
-            response = requests.get(f"https://fakestoreapi.com/products/category/{matching_category}")
-        else:
-            # Si no, buscar en todos los productos
-            response = requests.get("https://fakestoreapi.com/products")
-            
-        if response.status_code == 200:
-            products = response.json()
-            # Si no es búsqueda por categoría, filtrar por título o descripción
-            if not matching_category:
-                products = [
-                    p for p in products 
-                    if (query_lower in p.get('title', '').lower() or 
-                        query_lower in p.get('description', '').lower() or
-                        query_lower in p.get('category', '').lower())
-                ]
-            return products
-    except Exception as e:
-        st.error(f"Error al buscar en FakeStore: {str(e)}")
-    return []
-
-def save_to_supabase(products):
-    """Guarda los productos en Supabase"""
-    if not products:
-        return
-    
-    for product in products:
-        try:
-            # Verificar si el producto ya existe por nombre
-            existing = supabase.table("products")\
-                        .select("id")\
-                        .eq("name", product['title'])\
-                        .execute()
-            
-            if not existing.data:
-                # Insertar nuevo producto
-                new_product = {
-                    "name": product['title'],
-                    "description": product.get('description', ''),
-                    "price": float(product['price']),  # Asegurar que sea float
-                    "category": product.get('category', ''),
-                    "image_url": product.get('image', ''),
-                    "created_at": datetime.now().isoformat()
-                }
-                
-                # Insertar en Supabase
-                result = supabase.table("products").insert(new_product).execute()
-                if hasattr(result, 'error') and result.error:
-                    st.error(f"Error al guardar: {result.error}")
-                else:
-                    st.success(f"¡{product['title']} agregado correctamente!")
-                    st.rerun()
-            else:
-                st.info(f"El producto {product['title']} ya existe en la base de datos")
-                
-        except Exception as e:
-            st.error(f"Error al guardar producto: {str(e)}")
-            # Mostrar más detalles del error para depuración
-            if hasattr(e, 'message'):
-                st.json(e.message)
-            elif hasattr(e, 'args') and e.args:
-                st.json(e.args[0])
-
-def get_products():
-    res = supabase.table("products").select("*").execute()
-    return pd.DataFrame(res.data) if res.data else pd.DataFrame()
-
-def get_price_history(product_id=None):
-    q = supabase.table("price_history").select("*")
-    if product_id:
-        q = q.eq("product_id", product_id)
-    res = q.order("timestamp", desc=True).limit(500).execute()
-    df = pd.DataFrame(res.data)
-    return df
-
-def generate_pdf(df):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "Resumen de Precios", 0, 1, "C")
-    pdf.set_font("Arial", "", 10)
-
-    for _, r in df.iterrows():
-        product_name = r.get("product_name") or r.get("product_id", "Desconocido")
-        pdf.multi_cell(
-    190,  # ancho en mm, menor que A4 que es ~210 mm
-    8,
-    f"{product_name} | {r['site_name']} | ${r['price']} | {r['timestamp']}",
+# Configuración de la página
+st.set_page_config(
+    page_title="Tracker de Precios",
+    page_icon="🛒",
+    layout="wide"
 )
 
+# Archivo para guardar los productos trackeados
+DATA_FILE = "productos_trackeados.json"
 
-    buf = BytesIO()
-    pdf.output(buf)
-    buf.seek(0)
-    return buf
+def cargar_productos():
+    """Cargar productos guardados desde el archivo JSON"""
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
 
-# --- UI ---
-st.title("💰 Comparador de Precios — Dashboard")
+def guardar_productos(productos):
+    """Guardar productos en archivo JSON"""
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(productos, f, ensure_ascii=False, indent=2)
 
-# Get products list
-products_df = get_products()
-product_options = products_df['name'].tolist() if not products_df.empty else []
-
-# Sidebar: Home button
-if st.sidebar.button("🏠 Inicio"):
-    selected = "-- Todos --"
-else:
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔍 Búsqueda en FakeStore")
-    st.sidebar.caption("Sugerencias: electronics, jewelery, men's clothing, women's clothing")
-    st.sidebar.subheader("Seleccionar o escribir producto")
-    selected_from_list = st.sidebar.selectbox(
-        "Producto existente", 
-        ["-- Ninguno --"] + product_options
-    )
-    selected_manual = st.sidebar.text_input("O escribe un producto nuevo", "")
+def limpiar_precio(precio_texto):
+    """Limpiar y convertir el precio a número"""
+    if not precio_texto:
+        return 0
     
-    # Determinar cuál usar
-    fakestore_results = []
-    if selected_manual.strip() != "":
-        selected = selected_manual.strip()
-        # Buscar en FakeStore API cuando se escribe manualmente
-        fakestore_results = search_fakestore(selected)
-    elif selected_from_list != "-- Ninguno --":
-        selected = selected_from_list
-    else:
-        selected = "-- Todos --"
-
-# Botón para "Check now" que llama webhook de n8n
-n8n_url = st.secrets.get("N8N_WEBHOOK_URL", "")
-if st.sidebar.button("Check now (n8n webhook)", key="check_now_webhook") and n8n_url:
-    payload = {}
-    if selected != "-- Todos --":
-        prod = products_df[products_df['name'] == selected].iloc[0] if selected in product_options else {}
-        payload = {
-            "product": selected,
-            "product_id": prod.get("id") if prod else None,
-            "url": prod.get("example_url") if prod else ""
-        }
-    else:
-        payload = {"action":"check_all"}
-
-    try:
-        r = requests.post(n8n_url, json=payload, timeout=30)
-        if r.ok:
-            st.success("Solicitud enviada a n8n")
+    # Remover símbolos y espacios, mantener solo números y comas
+    precio_limpio = re.sub(r'[^\d,]', '', str(precio_texto))
+    
+    # Si hay coma, asumir que es separador decimal
+    if ',' in precio_limpio:
+        partes = precio_limpio.split(',')
+        if len(partes) == 2:
+            # Formato europeo: 1.299,00 -> 1299.00
+            precio_limpio = partes[0].replace('.', '') + '.' + partes[1]
         else:
-            st.error(f"Webhook error: {r.status_code} {r.text}")
-    except Exception as e:
-        st.error("Error al llamar webhook: " + str(e))
+            precio_limpio = precio_limpio.replace(',', '')
+    
+    try:
+        return float(precio_limpio)
+    except:
+        return 0
 
-# Mostrar tabla principal y gráficos
-if selected_manual.strip() != "" and fakestore_results:
-    st.subheader(f"Resultados de búsqueda para: {selected_manual}")
-    
-    # Mostrar resultados de FakeStore en la sección principal
-    st.info(f"💡 Mostrando {len(fakestore_results)} resultados. Prueba con: electronics, jewelery, men's clothing, women's clothing")
-    
-    # Agrupar por categoría
-    products_by_category = {}
-    for product in fakestore_results:
-        category = product.get('category', 'Otros')
-        if category not in products_by_category:
-            products_by_category[category] = []
-        products_by_category[category].append(product)
-    
-    # Mostrar por categorías
-    for category, products in products_by_category.items():
-        st.subheader(f"📁 {category.title()}")
-        cols = st.columns(3)  # 3 columnas para mostrar los productos
+def setup_driver():
+    """Configurar Selenium WebDriver"""
+    try:
+        chrome_options = Options()
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
-        for idx, product in enumerate(products):
-            with cols[idx % 3]:
-                # Tarjeta de producto con borde usando columnas
-                col1, col2 = st.columns([1, 4])
-                
-                with col1:
-                    # Imagen
-                    st.image(
-                        product.get('image', ''), 
-                        width=100,
-                        use_column_width=True
-                    )
-                
-                with col2:
-                    # Título con límite de caracteres
-                    title = (product['title'][:30] + '...') if len(product['title']) > 30 else product['title']
-                    st.subheader(title, help=product['title'])  # Tooltip con título completo
-                    
-                    # Precio
-                    st.markdown(f"**Precio:** ${product['price']}")
-                    
-                    # Rating si está disponible
-                    if 'rating' in product and product['rating']:
-                        rating = product['rating']
-                        stars = '⭐' * int(rating.get('rate', 0))
-                        st.caption(f"{stars} ({rating.get('count', 0)} reseñas)")
-                    
-                    # Botón de acción
-                    if st.button(
-                        "➕ Agregar al comparador", 
-                        key=f"add_{product['id']}",
-                        use_container_width=True
-                    ):
-                        save_to_supabase([product])
-                        st.rerun()
-                
-                # Línea divisoria
-                st.markdown("---")
-    
-    st.markdown("---")
-elif selected == "-- Todos --":
-    ph = get_price_history()
-    if ph.empty:
-        st.info("No hay historial de precios aún.")
-    else:
-        prod_map = products_df.set_index("id")["name"].to_dict()
-        ph["name"] = ph["product_id"].map(prod_map)
-        latest = ph.sort_values("timestamp").groupby("product_id").tail(1)
-        latest = latest.sort_values("price")
-        st.subheader("Últimos precios (por producto)")
-        st.dataframe(latest[["name","site_name","price","timestamp","url"]].rename(columns={"name":"Producto"}), use_container_width=True)
-        st.subheader("Evolución (selecciona producto a la izquierda para ver gráfico)")
-else:
-    prod_match = products_df[products_df['name'] == selected]
-    if not prod_match.empty:
-        prod = prod_match.iloc[0].to_dict()
-        product_id = prod.get("id")
-    else:
-        prod = {}
-        product_id = None
-    st.subheader(f"Historial de precios — {selected}")
-    hist = get_price_history(product_id)
-    if hist.empty:
-        st.warning("No hay datos de historial para este producto.")
-    else:
-        hist['timestamp'] = pd.to_datetime(hist['timestamp'])
-        hist = hist.sort_values('timestamp')
-        st.dataframe(hist[['site_name','price','timestamp','url']], use_container_width=True)
-        fig = px.line(hist, x='timestamp', y='price', color='site_name', markers=True,
-                      labels={'timestamp':'Fecha','price':'Precio ($)','site_name':'Sitio'})
-        st.plotly_chart(fig, use_container_width=True)
-        if st.button("Generar PDF resumen", key="pdf_button"):
-            pdf_buf = generate_pdf(hist.sort_values('timestamp').groupby('site_name').tail(5))
-            b64 = base64.b64encode(pdf_buf.read()).decode()
-            href = f'<a href="data:application/octet-stream;base64,{b64}" download="reporte_{selected}.pdf">Descargar PDF</a>'
-            st.markdown(href, unsafe_allow_html=True)
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        return driver
+    except Exception as e:
+        st.error(f"Error configurando Chrome: {e}")
+        return None
 
-# Footer
-st.markdown("---")
-st.write("Conectado a Supabase:", SUPABASE_URL)
+def buscar_mercado_libre_selenium(query):
+    """Buscar productos en Mercado Libre usando Selenium"""
+    driver = None
+    try:
+        driver = setup_driver()
+        if not driver:
+            return []
+            
+        # URL de búsqueda en Mercado Libre Perú
+        url = f"https://listado.mercadolibre.com.pe/{query.replace(' ', '-')}"
+        st.write(f"🔍 Navegando a: {url}")
+        
+        driver.get(url)
+        
+        # Esperar a que cargue la página
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        
+        # Tomar screenshot para debugging (opcional)
+        # driver.save_screenshot("mercado_libre.png")
+        
+        # Obtener el HTML después de que cargue JavaScript
+        html = driver.page_source
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Guardar HTML para análisis
+        with open("mercado_libre_debug.html", "w", encoding="utf-8") as f:
+            f.write(soup.prettify())
+        
+        productos = []
+        
+        # Buscar productos - diferentes patrones de selectores
+        patrones_selectores = [
+            'li.ui-search-layout__item',
+            'div[data-component="search.results"] li',
+            'ol.ui-search-layout li',
+            'section[data-component="search.results"] li',
+            '.ui-search-result',
+            '.andes-card'
+        ]
+        
+        items = []
+        for patron in patrones_selectores:
+            items = soup.select(patron)
+            if items:
+                st.write(f"✅ Encontrados {len(items)} elementos con patrón: {patron}")
+                break
+        
+        if not items:
+            st.warning("❌ No se encontraron productos. Intentando método alternativo...")
+            # Buscar cualquier elemento que parezca producto
+            items = soup.find_all(['div', 'li'], class_=lambda x: x and any(word in str(x).lower() for word in ['item', 'result', 'product', 'card']))
+            st.write(f"Elementos encontrados con método alternativo: {len(items)}")
+        
+        for i, item in enumerate(items[:5]):  # Procesar primeros 5
+            try:
+                producto_info = extraer_info_producto(item, i)
+                if producto_info:
+                    productos.append(producto_info)
+                    
+            except Exception as e:
+                st.write(f"❌ Error procesando item {i}: {str(e)}")
+                continue
+        
+        return productos
+        
+    except Exception as e:
+        st.error(f"🚨 Error en Selenium: {str(e)}")
+        return []
+    finally:
+        if driver:
+            driver.quit()
+
+def extraer_info_producto(item, index):
+    """Extraer información del producto del elemento HTML"""
+    try:
+        # Título - múltiples selectores
+        titulo = "Sin título"
+        titulo_selectors = [
+            'h2.ui-search-item__title',
+            '.ui-search-item__title',
+            'h2',
+            '.ui-search-result__title',
+            '[class*="title"]',
+            '[class*="nombre"]'
+        ]
+        
+        for selector in titulo_selectors:
+            titulo_elem = item.select_one(selector)
+            if titulo_elem and titulo_elem.get_text(strip=True):
+                titulo = titulo_elem.get_text(strip=True)
+                break
+        
+        # Precio - múltiples selectores
+        precio = 0
+        precio_selectors = [
+            'span.andes-money-amount__fraction',
+            '.ui-search-price__part .andes-money-amount__fraction',
+            '.ui-search-price__fraction',
+            '.price-tag-fraction',
+            '[class*="price"]',
+            '[class*="precio"]',
+            '.andes-money-amount'
+        ]
+        
+        for selector in precio_selectors:
+            precio_elem = item.select_one(selector)
+            if precio_elem:
+                precio_texto = precio_elem.get_text(strip=True)
+                precio = limpiar_precio(precio_texto)
+                if precio > 0:
+                    break
+        
+        # Enlace
+        enlace = "#"
+        link_selectors = [
+            'a.ui-search-link',
+            'a.ui-search-result__content',
+            'a[href*="item.mercadolibre"]',
+            'a'
+        ]
+        
+        for selector in link_selectors:
+            link_elem = item.select_one(selector)
+            if link_elem and link_elem.get('href'):
+                enlace = link_elem['href']
+                # Limpiar enlace de parámetros de tracking
+                if '?promotion_type' in enlace:
+                    enlace = enlace.split('?promotion_type')[0]
+                break
+        
+        # Imagen
+        imagen = ""
+        img_selectors = [
+            'img.ui-search-result-image__element',
+            'img.ui-search-image__element',
+            'img[data-src]',
+            'img[src*="http"]'
+        ]
+        
+        for selector in img_selectors:
+            img_elem = item.select_one(selector)
+            if img_elem:
+                imagen = img_elem.get('data-src') or img_elem.get('src') or ""
+                if imagen and imagen.startswith('//'):
+                    imagen = 'https:' + imagen
+                break
+        
+        # Solo agregar si tenemos información válida
+        if titulo != "Sin título" and precio > 0:
+            st.write(f"✅ Producto {index+1}: {titulo[:50]}... - ${precio}")
+            return {
+                'titulo': titulo,
+                'precio': precio,
+                'enlace': enlace,
+                'imagen': imagen,
+                'tienda': 'Mercado Libre',
+                'fecha_consulta': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'query_original': st.session_state.get('current_query', '')
+            }
+        else:
+            st.write(f"❌ Producto {index+1} descartado - Título: {titulo[:30]}, Precio: {precio}")
+            return None
+            
+    except Exception as e:
+        st.write(f"❌ Error extrayendo info producto {index}: {str(e)}")
+        return None
+
+def buscar_mercado_libre_api(query):
+    """Método alternativo usando requests con headers mejorados"""
+    try:
+        url = f"https://listado.mercadolibre.com.pe/{query.replace(' ', '-')}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0',
+        }
+        
+        st.write(f"🔍 Intentando con requests: {url}")
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        if response.status_code != 200:
+            st.error(f"Error HTTP: {response.status_code}")
+            return []
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Verificar si estamos bloqueados
+        if "access denied" in soup.text.lower() or "bot" in soup.text.lower():
+            st.error("❌ Acceso bloqueado por Mercado Libre")
+            return []
+        
+        # Buscar productos
+        productos = []
+        items = soup.select('li.ui-search-layout__item, .ui-search-result, .andes-card')
+        
+        st.write(f"📦 Elementos encontrados: {len(items)}")
+        
+        for i, item in enumerate(items[:3]):
+            producto_info = extraer_info_producto(item, i)
+            if producto_info:
+                productos.append(producto_info)
+        
+        return productos
+        
+    except Exception as e:
+        st.error(f"🚨 Error en API method: {str(e)}")
+        return []
+
+def buscar_ebay(query):
+    """Buscar productos en eBay"""
+    try:
+        url = f"https://www.ebay.com/sch/i.html?_nkw={query.replace(' ', '+')}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        productos = []
+        items = soup.find_all('li', class_='s-item')[:4]
+        
+        for i, item in enumerate(items[1:4]):
+            try:
+                titulo_elem = item.find('h3', class_='s-item__title')
+                titulo = titulo_elem.text.strip() if titulo_elem else "Sin título"
+                
+                precio_elem = item.find('span', class_='s-item__price')
+                precio_texto = precio_elem.text.strip() if precio_elem else "0"
+                precio = limpiar_precio(precio_texto.split(' ')[0])
+                
+                enlace_elem = item.find('a', class_='s-item__link')
+                enlace = enlace_elem['href'] if enlace_elem else "#"
+                
+                img_elem = item.find('img', class_='s-item__image-img')
+                imagen = img_elem['src'] if img_elem else ""
+                
+                if titulo != "Sin título" and precio > 0:
+                    productos.append({
+                        'titulo': titulo,
+                        'precio': precio,
+                        'enlace': enlace,
+                        'imagen': imagen,
+                        'tienda': 'eBay',
+                        'fecha_consulta': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'query_original': query
+                    })
+                    
+            except Exception as e:
+                continue
+                
+        return productos
+        
+    except Exception as e:
+        st.error(f"Error en eBay: {str(e)}")
+        return []
+
+def mostrar_producto(producto, key_suffix):
+    """Mostrar un producto en una tarjeta"""
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col1:
+        if producto['imagen']:
+            st.image(producto['imagen'], width=100, use_column_width=True)
+        else:
+            st.write("📷 Sin imagen")
+    
+    with col2:
+        st.write(f"**{producto['titulo']}**")
+        st.write(f"**Precio:** ${producto['precio']:,.2f}")
+        st.write(f"**Tienda:** {producto['tienda']}")
+        st.write(f"**Fecha:** {producto['fecha_consulta']}")
+    
+    with col3:
+        if st.button("📊 Seguir precio", key=f"seguir_{key_suffix}"):
+            return True
+        if producto['enlace'] != "#":
+            st.markdown(f"[🔗 Ver producto]({producto['enlace']})")
+    
+    return False
+
+def main():
+    st.title("🛒 Tracker de Precios de Productos")
+    st.markdown("Busca productos en Mercado Libre y eBay y haz seguimiento de sus precios")
+    
+    # Búsqueda de productos
+    st.header("🔍 Buscar Productos")
+    
+    query = st.text_input("¿Qué producto buscas?", 
+                         placeholder="Ej: laptop, zapatillas, teléfono, etc.",
+                         key="search_input")
+    
+    st.session_state.current_query = query
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        buscar_ml = st.button("🔎 Buscar en Mercado Libre", use_container_width=True)
+    
+    with col2:
+        buscar_ebay = st.button("🌎 Buscar en eBay", use_container_width=True)
+    
+    # Resultados de búsqueda
+    if 'resultados' not in st.session_state:
+        st.session_state.resultados = []
+    
+    # Buscar en Mercado Libre
+    if buscar_ml and query:
+        with st.spinner("🔍 Buscando en Mercado Libre (esto puede tomar unos segundos)..."):
+            # Intentar primero con Selenium
+            resultados_ml = buscar_mercado_libre_selenium(query)
+            
+            # Si Selenium falla, intentar con requests
+            if not resultados_ml:
+                st.info("🔄 Intentando método alternativo...")
+                resultados_ml = buscar_mercado_libre_api(query)
+            
+            if resultados_ml:
+                st.session_state.resultados = resultados_ml
+                st.success(f"✅ Encontrados {len(resultados_ml)} productos en Mercado Libre")
+            else:
+                st.error("""
+                ❌ No se pudieron obtener productos de Mercado Libre. Posibles causas:
+                - Mercado Libre está bloqueando las peticiones
+                - Se necesita Selenium WebDriver
+                - La estructura de la página cambió
+                
+                **Solución:** Instala ChromeDriver o prueba con eBay.
+                """)
+    
+    # Buscar en eBay
+    if buscar_ebay and query:
+        with st.spinner("🌎 Buscando en eBay..."):
+            resultados_ebay = buscar_ebay(query)
+            if resultados_ebay:
+                st.session_state.resultados = resultados_ebay
+                st.success(f"✅ Encontrados {len(resultados_ebay)} productos en eBay")
+            else:
+                st.error("❌ No se encontraron productos en eBay")
+    
+    # Mostrar resultados
+    if st.session_state.resultados:
+        st.header("📦 Resultados de Búsqueda")
+        
+        productos_trackeados = cargar_productos()
+        
+        for i, producto in enumerate(st.session_state.resultados):
+            st.markdown("---")
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                if mostrar_producto(producto, f"resultado_{i}"):
+                    # Verificar si el producto ya está siendo seguido
+                    ya_existe = any(p['enlace'] == producto['enlace'] for p in productos_trackeados)
+                    
+                    if not ya_existe:
+                        productos_trackeados.append({
+                            **producto,
+                            'precio_inicial': producto['precio'],
+                            'precio_actual': producto['precio'],
+                            'fecha_seguimiento': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'historial_precios': [{
+                                'precio': producto['precio'],
+                                'fecha': producto['fecha_consulta']
+                            }]
+                        })
+                        guardar_productos(productos_trackeados)
+                        st.success("✅ Producto agregado para seguimiento!")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Este producto ya está siendo seguido")
+    
+    # Productos en seguimiento
+    st.header("📊 Productos en Seguimiento")
+    
+    productos_trackeados = cargar_productos()
+    
+    if not productos_trackeados:
+        st.info("ℹ️ No hay productos en seguimiento. Busca productos y haz clic en 'Seguir precio'")
+    else:
+        st.write(f"**Total de productos en seguimiento:** {len(productos_trackeados)}")
+        
+        for i, producto in enumerate(productos_trackeados):
+            st.markdown("---")
+            col1, col2, col3, col4 = st.columns([1, 2, 1, 1])
+            
+            with col1:
+                if producto.get('imagen'):
+                    st.image(producto['imagen'], width=80)
+                else:
+                    st.write("🖼️")
+            
+            with col2:
+                st.write(f"**{producto['titulo'][:100]}...**")
+                st.write(f"**Precio actual:** ${producto['precio_actual']:,.2f}")
+                st.write(f"**Precio inicial:** ${producto['precio_inicial']:,.2f}")
+                st.write(f"**Tienda:** {producto['tienda']}")
+                
+                diferencia = producto['precio_actual'] - producto['precio_inicial']
+                porcentaje = (diferencia / producto['precio_inicial']) * 100 if producto['precio_inicial'] > 0 else 0
+                
+                if diferencia < 0:
+                    st.success(f"📉 Bajó: ${abs(diferencia):,.2f} ({abs(porcentaje):.1f}%)")
+                elif diferencia > 0:
+                    st.error(f"📈 Subió: ${diferencia:,.2f} ({porcentaje:.1f}%)")
+                else:
+                    st.info("➡️ Sin cambios")
+            
+            with col3:
+                if st.button("🔄 Actualizar", key=f"actualizar_{i}"):
+                    with st.spinner("Actualizando precio..."):
+                        if producto['tienda'] == 'Mercado Libre':
+                            nuevos_resultados = buscar_mercado_libre_selenium(producto.get('query_original', producto['titulo'][:30]))
+                        else:
+                            nuevos_resultados = buscar_ebay(producto.get('query_original', producto['titulo'][:30]))
+                        
+                        if nuevos_resultados:
+                            for nuevo in nuevos_resultados:
+                                if (nuevo['enlace'] == producto['enlace'] or 
+                                    nuevo['titulo'].lower() in producto['titulo'].lower() or
+                                    producto['titulo'].lower() in nuevo['titulo'].lower()):
+                                    
+                                    precio_anterior = producto['precio_actual']
+                                    producto['precio_actual'] = nuevo['precio']
+                                    producto['fecha_consulta'] = nuevo['fecha_consulta']
+                                    
+                                    if abs(precio_anterior - nuevo['precio']) > 0.01:
+                                        producto['historial_precios'].append({
+                                            'precio': nuevo['precio'],
+                                            'fecha': nuevo['fecha_consulta']
+                                        })
+                                    
+                                    guardar_productos(productos_trackeados)
+                                    st.success("✅ Precio actualizado!")
+                                    time.sleep(1)
+                                    st.rerun()
+                                    break
+            
+            with col4:
+                if st.button("❌ Eliminar", key=f"eliminar_{i}"):
+                    productos_trackeados.pop(i)
+                    guardar_productos(productos_trackeados)
+                    st.success("✅ Producto eliminado!")
+                    time.sleep(1)
+                    st.rerun()
+
+if __name__ == "__main__":
+    main()
