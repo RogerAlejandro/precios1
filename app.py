@@ -17,6 +17,10 @@ import warnings
 import logging
 import plotly.express as px
 import pandas as pd
+from fpdf import FPDF
+import tempfile
+import os
+import base64
 from datetime import datetime
 
 
@@ -907,6 +911,83 @@ def main():
 
                             # Mostrar el gráfico
                             st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Botón para generar PDF
+                            if st.button("📄 Generar Reporte PDF", key=f"pdf_{producto['id']}"):
+                                with st.spinner("Generando reporte PDF..."):
+                                    # Crear PDF
+                                    pdf = FPDF()
+                                    pdf.add_page()
+                                    
+                                    # Configuración del PDF
+                                    pdf.set_font('Arial', 'B', 16)
+                                    pdf.cell(0, 10, f'Reporte de Precios - {producto["titulo"][:50]}', 0, 1, 'C')
+                                    pdf.ln(10)
+                                    
+                                    # Información del producto
+                                    pdf.set_font('Arial', '', 12)
+                                    pdf.cell(0, 10, f'Producto: {producto["titulo"]}', 0, 1)
+                                    pdf.cell(0, 10, f'Precio actual: ${producto["precio_actual"]:,.2f}', 0, 1)
+                                    pdf.cell(0, 10, f'Precio inicial: ${producto["precio_inicial"]:,.2f}', 0, 1)
+                                    
+                                    # Calcular diferencia
+                                    diferencia = producto['precio_actual'] - producto['precio_inicial']
+                                    porcentaje = (diferencia / producto['precio_inicial']) * 100 if producto['precio_inicial'] > 0 else 0
+                                    
+                                    if diferencia < 0:
+                                        pdf.cell(0, 10, f'Bajó: ${abs(diferencia):,.2f} ({abs(porcentaje):.1f}%)', 0, 1)
+                                    elif diferencia > 0:
+                                        pdf.cell(0, 10, f'Subió: ${diferencia:,.2f} ({porcentaje:.1f}%)', 0, 1)
+                                    else:
+                                        pdf.cell(0, 10, 'Sin cambios', 0, 1)
+                                    
+                                    # Guardar el gráfico como imagen temporal
+                                    temp_img = os.path.join(tempfile.gettempdir(), f'grafico_{producto["id"]}.png')
+                                    fig.write_image(temp_img, scale=2)
+                                    
+                                    # Añadir la imagen al PDF
+                                    pdf.ln(10)
+                                    pdf.cell(0, 10, 'Historial de Precios:', 0, 1)
+                                    pdf.image(temp_img, x=10, w=190)
+                                    
+                                    # Añadir tabla de historial
+                                    pdf.ln(10)
+                                    pdf.cell(0, 10, 'Registros de Precios:', 0, 1)
+                                    
+                                    # Crear tabla
+                                    pdf.set_font('Arial', 'B', 10)
+                                    pdf.cell(95, 10, 'Fecha', 1)
+                                    pdf.cell(95, 10, 'Precio ($)', 1, 1)
+                                    
+                                    pdf.set_font('Arial', '', 10)
+                                    for _, row in df_historial.iterrows():
+                                        fecha = pd.to_datetime(row['fecha_consulta']).strftime('%d/%m/%Y %H:%M')
+                                        precio = f"${row['precio']:,.2f}"
+                                        pdf.cell(95, 10, str(fecha), 1)
+                                        pdf.cell(95, 10, precio, 1, 1)
+                                    
+                                    # Guardar PDF temporal
+                                    pdf_output = os.path.join(tempfile.gettempdir(), f'reporte_{producto["id"]}.pdf')
+                                    pdf.output(pdf_output)
+                                    
+                                    # Crear enlace de descarga
+                                    with open(pdf_output, 'rb') as f:
+                                        pdf_data = f.read()
+                                    
+                                    # Crear botón de descarga
+                                    st.download_button(
+                                        label="⬇️ Descargar Reporte PDF",
+                                        data=pdf_data,
+                                        file_name=f"reporte_{producto['id']}.pdf",
+                                        mime='application/pdf'
+                                    )
+                                    
+                                    # Eliminar archivos temporales
+                                    try:
+                                        os.remove(temp_img)
+                                        os.remove(pdf_output)
+                                    except:
+                                        pass
 
                         with col2:
                             # Mostrar estadísticas rápidas
