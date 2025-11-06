@@ -524,18 +524,25 @@ def mostrar_producto_busqueda(producto, key_suffix, _supabase):
     with col3:
         if st.button("📊 Seguir precio", key=f"seguir_{key_suffix}"):
             if _supabase:
-                producto_id = guardar_producto_supabase(_supabase, producto)
-                if producto_id:
-                    st.success("✅ Producto agregado para seguimiento!")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("❌ Error al guardar producto")
+                with st.spinner('Guardando producto...'):
+                    try:
+                        producto_id = guardar_producto_supabase(_supabase, producto)
+                        if producto_id:
+                            st.success("✅ Producto agregado para seguimiento!")
+                            # Limpiar resultados de búsqueda
+                            if 'resultados' in st.session_state:
+                                del st.session_state.resultados
+                            st.rerun()
+                        else:
+                            st.error("❌ Error al guardar el producto")
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
             else:
                 st.error("❌ No hay conexión a la base de datos")
         
         if producto['enlace'] != "#":
             st.markdown(f"[🔗 Ver producto]({producto['enlace']})")
+
 
 def main():
     st.title("🛒 Tracker de Precios")
