@@ -517,7 +517,7 @@ def buscar_mercado_libre_selenium(query):
             items = soup.select(selector)
             if items:
                 st.write(
-                    f"✅ Encontrados {len(items)} elementos con selector: {selector}")
+                    f"✅ Encontrados {len(items)} elementos")
                 items_encontrados = items
                 break
 
@@ -693,73 +693,228 @@ def extraer_info_producto_ml(item, index):
         return None
 
 
-def buscar_ebay(query):
-    """Buscar productos en eBay con selectores actualizados"""
+def buscar_ebay(query, max_productos=5):
+    """Buscar productos en eBay con Selenium mejorado"""
+    driver = None
     try:
-        url = f"https://www.ebay.com/sch/i.html?_nkw={query.replace(' ', '+')}"
-
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
-
-        st.write(f"🔍 Buscando en eBay: {query}")
-
-        response = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.content, 'html.parser')
-
+        # Configurar opciones de Chrome
+        chrome_options = Options()
+        
+        # Configuración mejorada para evitar detección
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        # User agent realista
+        user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+        chrome_options.add_argument(f'user-agent={user_agent}')
+        
+        # Inicializar el navegador
+        driver = webdriver.Chrome(options=chrome_options)
+        
+        # Modificar las propiedades del navegador para parecer más humano
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        driver.execute_cdp_cmd('Network.setUserAgentOverride', {"userAgent": user_agent})
+        
+        # Construir URL de búsqueda
+        url = f"https://www.ebay.com/sch/i.html?_nkw={query.replace(' ', '+')}&_sop=15"  # Ordenar por precio + envío más bajo
+        
+        st.write(f"🔍 Navegando directamente a: {url}")
+        
+        # Navegar directamente a la URL de búsqueda
+        driver.get(url)
+        time.sleep(3)  # Esperar a que cargue la página
+        
+        # Hacer scroll para cargar contenido dinámico
+        for _ in range(3):
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1)
+        
+        # Obtener el HTML después de que se cargue el JavaScript
+        html = driver.page_source
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Guardar HTML para depuración
+        with open("ebay_full_page.html", "w", encoding="utf-8") as f:
+            f.write(soup.prettify())
+        
+        # Lista para almacenar productos
         productos = []
-
-        # Selectores actualizados para eBay
-        items = soup.find_all('li', {'class': 's-item'})[:6]  # Tomar más items
-
-        # Saltar el primero (usualmente anuncio)
-        for i, item in enumerate(items[1:5]):
+        
+        # Buscar elementos de productos
+        selectores_posibles = [
+            'li.s-item', 'div.s-item__wrapper', 'div.s-item__info', 
+            'ul.srp-results li', 'div.srp-river-main', 'div.s-item'
+        ]
+        
+        # Buscar el selector que coincida
+        items = []
+        for selector in selectores_posibles:
+            items = soup.select(selector)
+            if items and len(items) > 5:  # Verificar que hay suficientes elementos
+                st.write(f"🔍 Se encontraron {len(items)} elementos con el selector: {selector}")
+                # Guardar el primer elemento para depuración
+                with open("first_item.html", "w", encoding="utf-8") as f:
+                    f.write(str(items[0]))
+                break
+        
+        if not items or len(items) <= 5:
+            st.warning("No se encontraron suficientes elementos de productos.")
+            return []
+        
+        # Procesar los primeros max_productos productos
+        for i, item in enumerate(items[:max_productos]):
             try:
-                # Título
-                titulo_elem = item.find('div', {'class': 's-item__title'})
-                if not titulo_elem:
-                    titulo_elem = item.find('h3', {'class': 's-item__title'})
-                titulo = titulo_elem.text.strip() if titulo_elem else "Sin título"
-
-                # Precio
-                precio_elem = item.find('span', {'class': 's-item__price'})
-                precio_texto = precio_elem.text.strip() if precio_elem else "0"
-                precio = limpiar_precio(precio_texto.split(' ')[0])
-
-                # Enlace
-                enlace_elem = item.find('a', {'class': 's-item__link'})
-                enlace = enlace_elem['href'] if enlace_elem else "#"
-
-                # Imagen
-                img_elem = item.find('img', {'class': 's-item__image-img'})
-                imagen = img_elem['src'] if img_elem else ""
-
-                if titulo != "Sin título" and precio > 0 and "to" not in precio_texto.lower():
+                # Extraer título
+                titulo = "Sin título"
+                titulo_selectors = [
+                    '.s-item__title', 'a.s-item__link', 'div.s-item__title a',
+                    'h3.s-item__title', '.s-item__title--has-tags', '.s-item__title--has-subtitle',
+                    'div[class*="title"]', 'span[class*="title"]', 'h3', 'h2', 'h1', 'a', 'span', 'div'
+                ]
+                
+                for selector in titulo_selectors:
+                    title_elem = item.select_one(selector)
+                    if title_elem:
+                        titulo = title_elem.get_text(strip=True)
+                        if titulo and len(titulo) > 5:  # Filtrar títulos muy cortos
+                            break
+                
+                # Limpiar el título
+                titulo = titulo.replace('Nuevo', '').replace('nuevo', '').replace('NUEVO', '').strip()
+                titulo = re.sub(r'^\s*[\-\*]\s*', '', titulo)  # Eliminar guiones o asteriscos al inicio
+                
+                # Saltar si es un anuncio o no tiene título
+                if any(x in titulo.lower() for x in ["comprar ahora", "sponsored", "patrocinado", "anuncio", "advertisement"]) or titulo == "Sin título":
+                    st.write(f"⚠️ Saltando anuncio o sin título: {titulo[:50]}...")
+                    continue
+                
+                # Extraer precio
+                precio = 0
+                precio_texto = "S/. 0.00"
+                precio_selectors = [
+                    '.s-item__price', '.s-item__details .s-item__price',
+                    '.s-item__detail--primary', '.s-item__detail--price',
+                    '.s-item__price .POSITIVE', '.s-item__price .NEGATIVE',
+                    '*[class*="price"]', '*[class*="amount"]',
+                    ':contains("$")', ':contains("S/")', ':contains("€")',
+                    'span', 'div', 'p'
+                ]
+                
+                for selector in precio_selectors:
+                    try:
+                        price_elem = item.select_one(selector)
+                        if price_elem:
+                            precio_texto = price_elem.get_text(strip=True)
+                            # Buscar patrones de precio (números con símbolos de moneda)
+                            if any(c in precio_texto for c in ['$', '€', 'S/', 'USD', 'EUR', 'PEN']) and any(c.isdigit() for c in precio_texto):
+                                st.write(f"✅ Precio encontrado con selector '{selector}': {precio_texto}")
+                                break
+                    except Exception as e:
+                        continue
+                
+                # Si no se encontró precio, intentar con expresiones regulares
+                if not precio_texto or precio_texto == "S/. 0.00":
+                    all_text = item.get_text(' ', strip=True)
+                    # Buscar patrones de precio con regex
+                    price_matches = re.findall(r'[\$€S/]\s*\d+[\d,.]*|\d+[\d,.]*\s*[\$€S/]', all_text)
+                    if price_matches:
+                        precio_texto = price_matches[0]
+                        st.write(f"ℹ️ Precio encontrado con regex: {precio_texto}")
+                
+                # Limpiar y convertir el precio
+                # Primero, manejar el caso específico de 'S/.'
+                if 'S/.' in precio_texto:
+                    precio_limpio = precio_texto.replace('S/.', '').strip()
+                else:
+                    precio_limpio = re.sub(r'[^\d.,]', '', precio_texto)
+                
+                # Reemplazar comas por puntos para el separador decimal
+                if ',' in precio_limpio and '.' in precio_limpio:
+                    # Si hay ambos, asumir que la coma es el separador de miles
+                    precio_limpio = precio_limpio.replace(',', '')
+                elif ',' in precio_limpio:
+                    # Si solo hay coma, reemplazarla por punto
+                    precio_limpio = precio_limpio.replace(',', '.')
+                
+                try:
+                    precio = float(precio_limpio) if precio_limpio else 0
+                except ValueError:
+                    st.write(f"⚠️ No se pudo convertir el precio: {precio_texto}")
+                    precio = 0
+                
+                # Extraer enlace
+                enlace = "#"
+                link_selectors = ['a.s-item__link', 'a[href*="itm"]', 'a[class*="link"]', 'a']
+                for selector in link_selectors:
+                    link_elem = item.select_one(selector)
+                    if link_elem and 'href' in link_elem.attrs:
+                        enlace = link_elem['href']
+                        break
+                
+                # Extraer imagen
+                imagen = ""
+                img_selectors = ['img.s-item__image-img', 'img[class*="image"]', 'img']
+                for selector in img_selectors:
+                    img_elem = item.select_one(selector)
+                    if img_elem and 'src' in img_elem.attrs:
+                        imagen = img_elem['src']
+                        break
+                
+                # Determinar la moneda
+                moneda = "S/."  # Por defecto soles peruanos
+                if any(c in precio_texto for c in ['$', 'USD']):
+                    moneda = "USD"
+                elif '€' in precio_texto or 'EUR' in precio_texto.upper():
+                    moneda = "€"
+                
+                # Agregar producto a la lista
+                if titulo != "Sin título" and precio > 0:
                     productos.append({
-                        'titulo': titulo,
+                        'titulo': titulo[:100] + ('...' if len(titulo) > 100 else ''),
                         'precio': precio,
+                        'precio_formateado': f"{moneda} {precio:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'),
                         'enlace': enlace,
                         'imagen': imagen,
                         'tienda': 'eBay',
                         'fecha_consulta': datetime.now().isoformat(),
                         'query_original': query
                     })
-                    st.write(f"✅ eBay producto {i+1} agregado")
-
+                    
+                    st.write(f"✅ Producto {len(productos)}: {titulo[:50]}... - {moneda} {precio:,.2f}")
+                    
+                    # Detener si ya tenemos suficientes productos
+                    if len(productos) >= max_productos:
+                        break
+            
             except Exception as e:
+                st.write(f"⚠️ Error procesando producto {i}: {str(e)}")
                 continue
-
-        return productos
-
+        
+        # Ordenar por precio
+        productos_ordenados = sorted(productos, key=lambda x: x['precio'])
+        return productos_ordenados[:max_productos]
+        
     except Exception as e:
-        st.error(f"Error en eBay: {str(e)}")
+        st.error(f"❌ Error al buscar en eBay: {str(e)}")
+        st.error("Posibles causas:")
+        st.error("- eBay está bloqueando las solicitudes automatizadas")
+        st.error("- La estructura de la página ha cambiado")
+        st.error("- Problemas de conexión a internet")
         return []
+        
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
+            driver.quit()
 
 
 def mostrar_producto_busqueda(producto, key_suffix, _supabase):
@@ -830,7 +985,7 @@ def main():
                               use_container_width=True)
 
     with col2:
-        buscar_ebay = st.button("🌎 Buscar en eBay", use_container_width=True)
+        btn_buscar_ebay = st.button("🌎 Buscar en eBay", use_container_width=True)
 
     # Resultados de búsqueda
     if 'resultados' not in st.session_state:
@@ -851,7 +1006,7 @@ def main():
                 - Intenta con otro término de búsqueda
                 """)
 
-    if buscar_ebay and query:
+    if btn_buscar_ebay and query:
         with st.spinner("🌎 Buscando en eBay..."):
             resultados_ebay = buscar_ebay(query)
             if resultados_ebay:
