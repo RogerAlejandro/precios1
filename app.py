@@ -540,7 +540,14 @@ def buscar_mercado_libre_selenium(query):
                 st.write(f"❌ Error procesando item {i}: {str(e)}")
                 continue
 
-        return productos
+        # Ordenar productos por precio de menor a mayor
+        productos_ordenados = sorted(productos, key=lambda x: x['precio'] if x['precio'] > 0 else float('inf'))
+        
+        # Mostrar mensaje con el rango de precios
+        if productos_ordenados:
+            st.success(f"✅ Encontrados {len(productos_ordenados)} productos. Precios desde S/ {productos_ordenados[0]['precio']:,.2f} hasta S/ {productos_ordenados[-1]['precio']:,.2f}")
+        
+        return productos_ordenados
 
     except Exception as e:
         st.error(f"🚨 Error en Mercado Libre: {str(e)}")
@@ -573,45 +580,53 @@ def extraer_info_producto_ml(item, index):
         # PRECIO - Extraer el precio correcto
         precio = 0
         
-        # 1. Primero buscar el precio en el atributo aria-label que contiene "Ahora: X soles" o "X soles"
-        precio_containers = item.select('span.andes-money-amount')
-        for container in precio_containers:
-            aria_label = container.get('aria-label', '').lower()
-            if 'soles' in aria_label:
-                # Extraer solo los números del texto
-                import re
-                numeros = re.findall(r'[\d.,]+', aria_label)
-                if numeros:
-                    # Tomar el último número encontrado (por si hay varios)
-                    precio_texto = numeros[-1]
-                    precio = limpiar_precio(precio_texto)
-                    st.write(f"Precio encontrado en aria-label: {aria_label} -> {precio_texto} -> {precio}")
-                    if precio > 0:
-                        break
+        # 1. Primero buscar el precio en la estructura estándar (más confiable)
+        precio_container = item.select_one('div.ui-search-price__second-line')
+        if not precio_container:
+            precio_container = item.select_one('div.ui-search-price')
+            
+        if precio_container:
+            # Buscar el precio principal (parte entera)
+            precio_elem = precio_container.select_one('span.andes-money-amount__fraction')
+            
+            if precio_elem:
+                precio_texto = precio_elem.get_text(strip=True).replace('.', '')
+                
+                # Buscar céntimos (si existen)
+                centavos_elem = precio_container.select_one('span.andes-money-amount__cents')
+                if centavos_elem:
+                    centavos = centavos_elem.get_text(strip=True)
+                    precio_texto += '.' + centavos.zfill(2)  # Asegurar 2 dígitos
+                
+                precio = limpiar_precio(precio_texto)
+                st.write(f"Precio encontrado en estructura estándar: {precio_texto} -> {precio}")
         
-        # 2. Si no se encontró en aria-label, buscar el precio en la estructura estándar
+        # 2. Si no se encontró, intentar con el atributo aria-label
         if precio <= 0:
-            # Buscar el contenedor principal de precios
-            precio_container = item.select_one('div.ui-search-price__second-line, div.ui-search-price')
-            if precio_container:
-                # Extraer la parte entera del precio
-                precio_elem = precio_container.select_one('span.andes-money-amount__fraction')
-                if precio_elem:
-                    precio_texto = precio_elem.get_text(strip=True)
+            precio_containers = item.select('span.andes-money-amount')
+            for container in precio_containers:
+                aria_label = container.get('aria-label', '').lower()
+                if 'soles' in aria_label:
+                    # Extraer todos los números del texto
+                    numeros = re.findall(r'[\d.,]+', aria_label)
+                    if len(numeros) >= 2:
+                        # Si hay múltiples números, asumir que el primero es el precio y el segundo los céntimos
+                        precio_texto = f"{numeros[0].replace('.', '')}.{numeros[1].zfill(2)}"
+                    elif numeros:
+                        # Si solo hay un número, usarlo como está
+                        precio_texto = numeros[0].replace('.', '')
                     
-                    # Verificar si hay centavos en un elemento separado
-                    centavos_elem = precio_container.select_one('span.andes-money-amount__cents')
-                    if centavos_elem:
-                        precio_texto += ',' + centavos_elem.get_text(strip=True)
-                    
-                    precio = limpiar_precio(precio_texto)
-                    st.write(f"Precio encontrado en estructura estándar: {precio_texto} -> {precio}")
+                    if precio_texto:
+                        precio = limpiar_precio(precio_texto)
+                        st.write(f"Precio encontrado en aria-label: {aria_label} -> {precio_texto} -> {precio}")
+                        if precio > 0:
+                            break
         
         # 3. Último recurso: buscar cualquier precio en la página
         if precio <= 0:
             precio_elems = item.select('span.andes-money-amount__fraction')
             for precio_elem in precio_elems:
-                precio_texto = precio_elem.get_text(strip=True)
+                precio_texto = precio_elem.get_text(strip=True).replace('.', '')
                 precio = limpiar_precio(precio_texto)
                 if precio > 0:
                     st.write(f"Precio encontrado como último recurso: {precio_texto} -> {precio}")
