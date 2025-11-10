@@ -398,23 +398,45 @@ def limpiar_precio(precio_texto):
     """Limpiar y convertir el precio a número"""
     if not precio_texto:
         return 0
-
-    # Remover símbolos y espacios, mantener números, puntos y comas
-    precio_limpio = re.sub(r'[^\d,.]', '', str(precio_texto))
-
-    # Manejar diferentes formatos de precio
-    if ',' in precio_limpio and '.' in precio_limpio:
-        # Formato: 1.299,00 -> 1299.00
-        partes = precio_limpio.split(',')
-        if len(partes) == 2:
-            precio_limpio = partes[0].replace('.', '') + '.' + partes[1]
-    elif ',' in precio_limpio:
-        # Formato: 1,299 -> 1299
-        precio_limpio = precio_limpio.replace(',', '')
-
+    
+    # Convertir a string por si acaso
+    precio_str = str(precio_texto).strip()
+    
+    # Si el precio está en formato "1.234,56" (punto como separador de miles y coma decimal)
+    if ',' in precio_str and '.' in precio_str:
+        # Si hay más de una coma, es probable que sea el formato peruano (1,234.56 -> 1234.56)
+        if precio_str.find(',') < precio_str.rfind(','):
+            # Formato: 1,234.56 -> 1234.56
+            precio_limpio = precio_str.replace(',', '')
+        else:
+            # Formato: 1.234,56 -> 1234.56
+            precio_limpio = precio_str.replace('.', '').replace(',', '.')
+    # Si solo hay comas, verificar si es el separador decimal
+    elif ',' in precio_str:
+        # Si hay más de 3 dígitos después de la última coma, probablemente sea el separador de miles
+        ultima_coma = precio_str.rfind(',')
+        if len(precio_str) - ultima_coma > 3:
+            # Es un separador de miles, eliminarlo
+            precio_limpio = precio_str.replace(',', '')
+        else:
+            # Es un separador decimal, cambiar por punto
+            precio_limpio = precio_str.replace(',', '.')
+    else:
+        # No hay comas, usar el valor tal cual
+        precio_limpio = precio_str
+    
+    # Eliminar cualquier caracter que no sea dígito o punto
+    precio_limpio = re.sub(r'[^\d.]', '', precio_limpio)
+    
+    # Asegurarse de que solo haya un punto decimal
+    if precio_limpio.count('.') > 1:
+        partes = precio_limpio.split('.')
+        precio_limpio = ''.join(partes[:-1]) + '.' + partes[-1]
+    
     try:
         return float(precio_limpio)
-    except:
+    except (ValueError, TypeError):
+        st.write(f"Error al convertir precio: '{precio_texto}' -> '{precio_limpio}'")
         return 0
 
 
@@ -548,24 +570,51 @@ def extraer_info_producto_ml(item, index):
                 titulo = titulo_elem.get_text(strip=True)
                 break
 
-        # PRECIO - Múltiples selectores
+        # PRECIO - Extraer el precio correcto
         precio = 0
-        precio_selectors = [
-            'span.andes-money-amount__fraction',
-            '.ui-search-price__part .andes-money-amount__fraction',
-            '.ui-search-price__fraction',
-            '.price-tag-fraction',
-            '[class*="price"]',
-            '.andes-money-amount',
-            'div.ui-search-price'
-        ]
-
-        for selector in precio_selectors:
-            precio_elem = item.select_one(selector)
-            if precio_elem:
+        
+        # 1. Primero buscar el precio en el atributo aria-label que contiene "Ahora: X soles" o "X soles"
+        precio_containers = item.select('span.andes-money-amount')
+        for container in precio_containers:
+            aria_label = container.get('aria-label', '').lower()
+            if 'soles' in aria_label:
+                # Extraer solo los números del texto
+                import re
+                numeros = re.findall(r'[\d.,]+', aria_label)
+                if numeros:
+                    # Tomar el último número encontrado (por si hay varios)
+                    precio_texto = numeros[-1]
+                    precio = limpiar_precio(precio_texto)
+                    st.write(f"Precio encontrado en aria-label: {aria_label} -> {precio_texto} -> {precio}")
+                    if precio > 0:
+                        break
+        
+        # 2. Si no se encontró en aria-label, buscar el precio en la estructura estándar
+        if precio <= 0:
+            # Buscar el contenedor principal de precios
+            precio_container = item.select_one('div.ui-search-price__second-line, div.ui-search-price')
+            if precio_container:
+                # Extraer la parte entera del precio
+                precio_elem = precio_container.select_one('span.andes-money-amount__fraction')
+                if precio_elem:
+                    precio_texto = precio_elem.get_text(strip=True)
+                    
+                    # Verificar si hay centavos en un elemento separado
+                    centavos_elem = precio_container.select_one('span.andes-money-amount__cents')
+                    if centavos_elem:
+                        precio_texto += ',' + centavos_elem.get_text(strip=True)
+                    
+                    precio = limpiar_precio(precio_texto)
+                    st.write(f"Precio encontrado en estructura estándar: {precio_texto} -> {precio}")
+        
+        # 3. Último recurso: buscar cualquier precio en la página
+        if precio <= 0:
+            precio_elems = item.select('span.andes-money-amount__fraction')
+            for precio_elem in precio_elems:
                 precio_texto = precio_elem.get_text(strip=True)
                 precio = limpiar_precio(precio_texto)
                 if precio > 0:
+                    st.write(f"Precio encontrado como último recurso: {precio_texto} -> {precio}")
                     break
 
         # ENLACE
@@ -606,10 +655,13 @@ def extraer_info_producto_ml(item, index):
 
         # Solo agregar si tenemos información válida
         if titulo != "Sin título" and precio > 0:
-            st.write(f"✅ Producto {index+1}: {titulo[:50]}... - ${precio}")
+            # Formatear el precio para mostrarlo con 2 decimales
+            precio_formateado = f"{precio:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            st.write(f"✅ Producto {index+1}: {titulo[:50]}... - S/ {precio_formateado}")
             return {
                 'titulo': titulo,
                 'precio': precio,
+                'precio_formateado': f"S/ {precio_formateado}",  # Guardar el precio formateado
                 'enlace': enlace,
                 'imagen': imagen,
                 'tienda': 'Mercado Libre',
