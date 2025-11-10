@@ -701,7 +701,7 @@ def mostrar_producto_busqueda(producto, key_suffix, _supabase):
 
     with col1:
         if producto['imagen']:
-            st.image(producto['imagen'], width=100, use_column_width=True)
+            st.image(producto['imagen'], width=100, use_container_width=True)
         else:
             st.write("📷 Sin imagen")
 
