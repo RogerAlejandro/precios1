@@ -879,6 +879,8 @@ def main():
                         with col1:
                             # Gráfico de líneas con puntos
                             st.markdown("### Evolución del Precio")
+                            
+                            # Crear el gráfico con scatter
                             fig = px.scatter(
                                 df_historial,
                                 x='fecha_consulta',
@@ -888,15 +890,29 @@ def main():
                                     'fecha_consulta': 'Fecha y Hora',
                                     'precio': 'Precio ($)'
                                 },
-                                trendline="lowess",  # Línea de tendencia suavizada
-                                trendline_color_override="red"
+                                # Añadir etiquetas a los puntos
+                                text=df_historial['precio'].round(2).astype(str) + ' $',
+                                # Desactivar la línea de tendencia por defecto
+                                trendline=None
                             )
-
-                            # Personalizar el gráfico
-                            fig.update_traces(
+                            
+                            # Añadir línea de tendencia como una capa separada
+                            fig.add_scatter(
+                                x=df_historial['fecha_consulta'],
+                                y=df_historial['precio'],
                                 mode='lines+markers',
+                                name='Precio',
+                                line=dict(color='blue', width=2),
                                 marker=dict(size=10, color='blue'),
-                                line=dict(width=2, color='blue')
+                                showlegend=False
+                            )
+                            
+                            # Asegurar que se muestren todos los puntos
+                            fig.update_traces(
+                                mode='markers+text',
+                                marker=dict(size=10, color='blue'),
+                                textposition='top center',
+                                textfont=dict(size=10, color='black')
                             )
 
                             # Mejorar el diseño del gráfico
@@ -906,7 +922,16 @@ def main():
                                 hovermode='x unified',
                                 showlegend=False,
                                 template='plotly_white',
-                                height=400
+                                height=500,
+                                # Asegurar que se muestren todas las etiquetas del eje X
+                                xaxis=dict(
+                                    showticklabels=True,
+                                    tickangle=45,
+                                    nticks=min(10, len(df_historial)),  # Máximo 10 marcas para evitar sobrecarga
+                                    tickformat='%d/%m %H:%M'  # Formato de fecha más compacto
+                                ),
+                                # Ajustar márgenes para que quepa el texto
+                                margin=dict(l=50, r=50, t=80, b=150)
                             )
 
                             # Mostrar el gráfico
@@ -915,56 +940,210 @@ def main():
                             # Botón para generar PDF
                             if st.button("📄 Generar Reporte PDF", key=f"pdf_{producto['id']}"):
                                 with st.spinner("Generando reporte PDF..."):
-                                    # Crear PDF
-                                    pdf = FPDF()
+                                    # Crear PDF con orientación horizontal para mejor visualización
+                                    pdf = FPDF('L', 'mm', 'A4')
                                     pdf.add_page()
                                     
-                                    # Configuración del PDF
-                                    pdf.set_font('Arial', 'B', 16)
-                                    pdf.cell(0, 10, f'Reporte de Precios - {producto["titulo"][:50]}', 0, 1, 'C')
-                                    pdf.ln(10)
+                                    # Colores pastel
+                                    colors = {
+                                        'background': (240, 248, 255),  # Azul claro
+                                        'header': (173, 216, 230),     # Azul pastel
+                                        'accent1': (255, 218, 185),    # Durazno pastel
+                                        'accent2': (221, 255, 221),    # Verde menta pastel
+                                        'text': (51, 51, 51),          # Gris oscuro para texto
+                                        'border': (200, 200, 200)      # Gris claro para bordes
+                                    }
+                                    
+                                    # Configuración de la página
+                                    pdf.set_auto_page_break(auto=True, margin=15)
+                                    
+                                    # Función para dibujar un rectángulo redondeado
+                                    def rounded_rect(x, y, w, h, r, color, fill=True):
+                                        d = r * 2
+                                        pdf.set_fill_color(*color) if fill else pdf.set_draw_color(*color)
+                                        # Esquinas redondeadas
+                                        pdf.ellipse(x, y, d, d, 'F' if fill else 'D')
+                                        pdf.ellipse(x + w - d, y, d, d, 'F' if fill else 'D')
+                                        pdf.ellipse(x, y + h - d, d, d, 'F' if fill else 'D')
+                                        pdf.ellipse(x + w - d, y + h - d, d, d, 'F' if fill else 'D')
+                                        # Rectángulos para los lados
+                                        pdf.rect(x + r, y, w - d, h, 'F' if fill else 'D')
+                                        pdf.rect(x, y + r, w, h - d, 'F' if fill else 'D')
+                                    
+                                    # Fondo de la página
+                                    pdf.set_fill_color(*colors['background'])
+                                    pdf.rect(0, 0, 297, 210, 'F')  # A4 en horizontal: 297x210mm
+                                    
+                                    # Encabezado con degradado
+                                    pdf.set_font('Arial', 'B', 20)
+                                    pdf.set_text_color(*colors['text'])
+                                    pdf.set_draw_color(*colors['header'])
+                                    pdf.set_fill_color(200, 230, 255)  # Azul pastel más claro
+                                    pdf.rect(0, 0, 297, 30, 'F')
+                                    pdf.set_xy(0, 5)
+                                    pdf.cell(0, 10, 'Reporte de Precios', 0, 1, 'C')
                                     
                                     # Información del producto
-                                    pdf.set_font('Arial', '', 12)
-                                    pdf.cell(0, 10, f'Producto: {producto["titulo"]}', 0, 1)
-                                    pdf.cell(0, 10, f'Precio actual: ${producto["precio_actual"]:,.2f}', 0, 1)
-                                    pdf.cell(0, 10, f'Precio inicial: ${producto["precio_inicial"]:,.2f}', 0, 1)
+                                    pdf.set_font('Arial', 'B', 14)
+                                    pdf.set_xy(15, 40)
+                                    pdf.cell(0, 10, 'Información del Producto', 0, 1, 'L')
                                     
-                                    # Calcular diferencia
+                                    # Tarjeta de información del producto
+                                    pdf.set_draw_color(*colors['border'])
+                                    pdf.set_fill_color(255, 255, 255)  # Fondo blanco
+                                    rounded_rect(15, 55, 260, 40, 5, colors['border'], False)
+                                    pdf.rect(15, 55, 260, 40, 'F')
+                                    
+                                    pdf.set_font('Arial', '', 12)
+                                    pdf.set_xy(20, 60)
+                                    pdf.multi_cell(250, 8, producto["titulo"], 0, 'L')
+                                    
+                                    # Precios en tarjetas pequeñas
+                                    box_width = 80
+                                    box_height = 30
+                                    
+                                    # Precio actual
+                                    pdf.set_fill_color(*colors['accent1'])
+                                    rounded_rect(15, 105, box_width, box_height, 5, colors['accent1'])
+                                    pdf.set_xy(15, 110)
+                                    pdf.set_font('Arial', 'B', 10)
+                                    pdf.cell(box_width, 5, 'Precio Actual', 0, 1, 'C')
+                                    pdf.set_font('Arial', 'B', 16)
+                                    pdf.set_xy(15, 118)
+                                    pdf.cell(box_width, 5, f'${producto["precio_actual"]:,.2f}', 0, 1, 'C')
+                                    
+                                    # Precio inicial
+                                    pdf.set_fill_color(*colors['accent2'])
+                                    rounded_rect(105, 105, box_width, box_height, 5, colors['accent2'])
+                                    pdf.set_xy(105, 110)
+                                    pdf.set_font('Arial', 'B', 10)
+                                    pdf.cell(box_width, 5, 'Precio Inicial', 0, 1, 'C')
+                                    pdf.set_font('Arial', 'B', 16)
+                                    pdf.set_xy(105, 118)
+                                    pdf.cell(box_width, 5, f'${producto["precio_inicial"]:,.2f}', 0, 1, 'C')
+                                    
+                                    # Diferencia
                                     diferencia = producto['precio_actual'] - producto['precio_inicial']
                                     porcentaje = (diferencia / producto['precio_inicial']) * 100 if producto['precio_inicial'] > 0 else 0
                                     
+                                    diff_color = (255, 100, 100) if diferencia > 0 else (100, 200, 100)
+                                    pdf.set_fill_color(*diff_color)
+                                    rounded_rect(195, 105, box_width, box_height, 5, diff_color)
+                                    pdf.set_xy(195, 110)
+                                    pdf.set_font('Arial', 'B', 10)
+                                    pdf.cell(box_width, 5, 'Variación', 0, 1, 'C')
+                                    pdf.set_font('Arial', 'B', 14)
+                                    pdf.set_xy(195, 118)
                                     if diferencia < 0:
-                                        pdf.cell(0, 10, f'Bajó: ${abs(diferencia):,.2f} ({abs(porcentaje):.1f}%)', 0, 1)
+                                        pdf.cell(box_width, 5, f'▼ ${abs(diferencia):,.2f} ({abs(porcentaje):.1f}%)', 0, 1, 'C')
                                     elif diferencia > 0:
-                                        pdf.cell(0, 10, f'Subió: ${diferencia:,.2f} ({porcentaje:.1f}%)', 0, 1)
+                                        pdf.cell(box_width, 5, f'▲ ${diferencia:,.2f} ({porcentaje:.1f}%)', 0, 1, 'C')
                                     else:
-                                        pdf.cell(0, 10, 'Sin cambios', 0, 1)
+                                        pdf.cell(box_width, 5, 'Sin cambios', 0, 1, 'C')
+                                    
+                                    # Crear una nueva página para el gráfico
+                                    pdf.add_page('L')  # Página en orientación horizontal
+                                    
+                                    # Configurar el gráfico para ocupar toda la página
+                                    fig.update_layout(
+                                        height=500,  # Altura mayor para aprovechar el espacio
+                                        margin=dict(l=20, r=20, t=40, b=40),  # Márgenes ajustados
+                                        showlegend=False,
+                                        title=dict(
+                                            text='Evolución del Precio',
+                                            x=0.5,  # Centrar título
+                                            xanchor='center',
+                                            font=dict(size=16)
+                                        ),
+                                        xaxis=dict(
+                                            showgrid=True,
+                                            gridcolor='lightgray',
+                                            tickfont=dict(size=10),
+                                            title='Fecha y Hora',
+                                            title_font=dict(size=12)
+                                        ),
+                                        yaxis=dict(
+                                            showgrid=True,
+                                            gridcolor='lightgray',
+                                            tickfont=dict(size=10),
+                                            title='Precio ($)',
+                                            title_font=dict(size=12)
+                                        ),
+                                        plot_bgcolor='white',
+                                        paper_bgcolor='white'
+                                    )
                                     
                                     # Guardar el gráfico como imagen temporal
                                     temp_img = os.path.join(tempfile.gettempdir(), f'grafico_{producto["id"]}.png')
-                                    fig.write_image(temp_img, scale=2)
+                                    fig.write_image(temp_img, width=1000, height=500, scale=2)
                                     
-                                    # Añadir la imagen al PDF
-                                    pdf.ln(10)
-                                    pdf.cell(0, 10, 'Historial de Precios:', 0, 1)
-                                    pdf.image(temp_img, x=10, w=190)
+                                    # Añadir la imagen del gráfico centrada en la página
+                                    pdf.image(temp_img, 
+                                             x=10,  # Mínimo margen
+                                             y=20,  # Empezar más arriba
+                                             w=277,  # Ancho casi completo de la página en horizontal (A4 landscape)
+                                             h=160,  # Altura proporcional
+                                             type='PNG')
                                     
-                                    # Añadir tabla de historial
-                                    pdf.ln(10)
-                                    pdf.cell(0, 10, 'Registros de Precios:', 0, 1)
+                                    # Tabla de historial
+                                    pdf.add_page()
+                                    pdf.set_font('Arial', 'B', 14)
+                                    pdf.set_xy(15, 20)
+                                    pdf.cell(0, 10, 'Historial de Precios', 0, 1, 'L')
                                     
-                                    # Crear tabla
+                                    # Encabezado de la tabla
+                                    pdf.set_fill_color(200, 230, 255)  # Azul pastel para el encabezado
+                                    pdf.set_draw_color(*colors['border'])
                                     pdf.set_font('Arial', 'B', 10)
-                                    pdf.cell(95, 10, 'Fecha', 1)
-                                    pdf.cell(95, 10, 'Precio ($)', 1, 1)
                                     
-                                    pdf.set_font('Arial', '', 10)
-                                    for _, row in df_historial.iterrows():
+                                    # Dibujar celdas del encabezado
+                                    pdf.set_xy(15, 35)
+                                    pdf.cell(140, 10, 'Fecha y Hora', 1, 0, 'C', 1)
+                                    pdf.cell(50, 10, 'Precio ($)', 1, 0, 'C', 1)
+                                    pdf.cell(50, 10, 'Cambio', 1, 1, 'C', 1)
+                                    
+                                    # Filas de la tabla
+                                    pdf.set_font('Arial', '', 9)
+                                    
+                                    # Ordenar por fecha más reciente primero
+                                    df_sorted = df_historial.sort_values('fecha_consulta', ascending=False)
+                                    
+                                    for i, (_, row) in enumerate(df_sorted.iterrows()):
+                                        # Alternar colores de fila
+                                        if i % 2 == 0:
+                                            pdf.set_fill_color(255, 255, 255)  # Blanco
+                                        else:
+                                            pdf.set_fill_color(245, 245, 245)  # Gris muy claro
+                                        
                                         fecha = pd.to_datetime(row['fecha_consulta']).strftime('%d/%m/%Y %H:%M')
-                                        precio = f"${row['precio']:,.2f}"
-                                        pdf.cell(95, 10, str(fecha), 1)
-                                        pdf.cell(95, 10, precio, 1, 1)
+                                        precio = row['precio']
+                                        
+                                        # Calcular cambio respecto al precio anterior
+                                        cambio = ""
+                                        if i < len(df_sorted) - 1:
+                                            precio_anterior = df_sorted.iloc[i + 1]['precio']
+                                            dif = precio - precio_anterior
+                                            if dif > 0:
+                                                cambio = f"▲ +${dif:,.2f}"
+                                                pdf.set_text_color(200, 0, 0)  # Rojo para aumento
+                                            elif dif < 0:
+                                                cambio = f"▼ ${dif:,.2f}"
+                                                pdf.set_text_color(0, 150, 0)  # Verde para disminución
+                                            else:
+                                                cambio = "="
+                                                pdf.set_text_color(100, 100, 100)  # Gris para igual
+                                        
+                                        pdf.set_xy(15, 45 + (i * 7))
+                                        pdf.cell(140, 7, str(fecha), 1, 0, 'L', 1)
+                                        pdf.cell(50, 7, f"${precio:,.2f}", 1, 0, 'R', 1)
+                                        pdf.cell(50, 7, cambio, 1, 1, 'C', 1)
+                                        pdf.set_text_color(0, 0, 0)  # Restaurar color negro
+                                    
+                                    # Pie de página
+                                    pdf.set_font('Arial', 'I', 8)
+                                    pdf.set_text_color(150, 150, 150)
+                                    pdf.set_y(-15)
+                                    pdf.cell(0, 10, f'Generado el {datetime.now().strftime("%d/%m/%Y %H:%M")} | Tracker de Precios', 0, 0, 'C')
                                     
                                     # Guardar PDF temporal
                                     pdf_output = os.path.join(tempfile.gettempdir(), f'reporte_{producto["id"]}.pdf')
