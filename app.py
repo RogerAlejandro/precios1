@@ -5,6 +5,7 @@ import pandas as pd
 import time
 import json
 import os
+import io
 from datetime import datetime
 import re
 import random
@@ -17,11 +18,25 @@ import warnings
 import logging
 import plotly.express as px
 import pandas as pd
+import numpy as np
 from fpdf import FPDF
 import tempfile
-import os
 import base64
-from datetime import datetime
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+from email.utils import formataddr
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
+
+# Configuración SMTP
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 
 
 # Configurar logging para debugging
@@ -36,6 +51,66 @@ st.set_page_config(
     page_icon="🛒",
     layout="wide"
 )
+
+# URL del webhook de n8n
+N8N_WEBHOOK_URL = "http://localhost:5678/webhook-test/webhook-test/tu-webhook-secreto"
+
+def enviar_por_correo(email, producto, pdf_bytes):
+    """Envía un correo con el PDF adjunto directamente por SMTP"""
+    try:
+        if not all([SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASSWORD]):
+            st.error("Error de configuración: Faltan credenciales SMTP")
+            return False
+            
+        # Crear mensaje
+        msg = MIMEMultipart()
+        msg['From'] = formataddr(('Tracker de Precios', SMTP_USER))
+        msg['To'] = email
+        msg['Subject'] = f"📊 Reporte de precios - {producto.get('titulo', 'Producto')[:50]}"
+        
+        # Cuerpo del mensaje
+        cuerpo = f"""
+        <html>
+            <body>
+                <h2>¡Hola! Aquí tienes el reporte de precios que solicitaste</h2>
+                <div style="background-color: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                    <h3>{producto.get('titulo', 'Producto')}</h3>
+                    <p><strong>Precio actual:</strong> ${producto.get('precio_actual', 'No disponible')}</p>
+                    <p><strong>Tienda:</strong> {producto.get('tienda', 'No especificada')}</p>
+                </div>
+                <p>Adjunto encontrarás el reporte detallado en formato PDF.</p>
+                <p>¡Gracias por usar nuestro servicio de seguimiento de precios!</p>
+                <p>Saludos,<br>El equipo de Tracker de Precios</p>
+            </body>
+        </html>
+        """
+        
+        # Adjuntar cuerpo HTML
+        msg.attach(MIMEText(cuerpo, 'html'))
+        
+        # Adjuntar PDF
+        nombre_archivo = f"reporte_{producto.get('id', '')}_{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
+        adjunto = MIMEApplication(pdf_bytes, _subtype='pdf')
+        adjunto.add_header('Content-Disposition', 'attachment', filename=nombre_archivo)
+        msg.attach(adjunto)
+        
+        # Enviar correo
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+            
+        return True
+        
+    except smtplib.SMTPAuthenticationError:
+        st.error("Error de autenticación: Verifica tu usuario y contraseña de Gmail")
+        return False
+    except smtplib.SMTPException as e:
+        st.error(f"Error al enviar el correo: {str(e)}")
+        return False
+    except Exception as e:
+        st.error(f"Error inesperado: {str(e)}")
+        return False
 
 # Estilos globales
 st.markdown("""
@@ -522,6 +597,134 @@ def actualizar_precio_producto(_supabase, producto):
         st.error(f"❌ Error en actualizar_precio_producto: {str(e)}")
         return False
 
+
+# Función para analizar la tendencia de precios
+def analizar_tendencia(historial):
+    """Analiza la tendencia de precios y devuelve una predicción clara"""
+    try:
+        if not historial or len(historial) < 2:
+            return "### 🔍 No hay suficientes datos para predecir la tendencia"
+        
+        # Convertir a DataFrame
+        df = pd.DataFrame(historial)
+        
+        # Verificar si existe la columna 'fecha' y si no, usar el índice
+        if 'fecha' in df.columns:
+            try:
+                df['fecha'] = pd.to_datetime(df['fecha'])
+            except:
+                df['fecha'] = pd.to_datetime('today') - pd.to_timedelta(range(len(df)-1, -1, -1), unit='d')
+        else:
+            df['fecha'] = pd.to_datetime('today') - pd.to_timedelta(range(len(df)-1, -1, -1), unit='d')
+            
+        # Asegurarse de que hay una columna de precio
+        if 'precio' not in df.columns:
+            return "### ❌ Error: No se encontraron precios en el historial"
+            
+        # Ordenar por fecha
+        df = df.sort_values('fecha')
+        
+        # Calcular cambios
+        df['cambio'] = df['precio'].diff()
+        df['porcentaje_cambio'] = (df['precio'].pct_change()) * 100
+        
+        # Obtener últimos cambios
+        ultimos_cambios = df['cambio'].dropna().tail(5).values
+        
+        # Calcular tendencia con regresión lineal simple
+        X = np.arange(len(df)).reshape(-1, 1)
+        y = df['precio'].values
+        
+        if len(df) > 1:  # Necesitamos al menos 2 puntos para una línea
+            from sklearn.linear_model import LinearRegression
+            model = LinearRegression()
+            model.fit(X, y)
+            pendiente = model.coef_[0]
+            
+            # Predecir siguiente valor
+            siguiente_x = len(df)
+            prediccion = model.predict([[siguiente_x]])[0]
+            precio_actual = df['precio'].iloc[-1]
+            
+            # Determinar tendencia
+            if abs(pendiente) < 0.01:  # Si la pendiente es casi cero
+                tendencia = "🟰 SE MANTIENE"
+                prediccion_texto = "El precio probablemente se mantendrá estable"
+            elif pendiente > 0:
+                tendencia = "🔼 SUBE"
+                aumento = prediccion - precio_actual
+                prediccion_texto = f"El precio podría subir a ${prediccion:,.2f} (${aumento:,.2f} más)"
+            else:
+                tendencia = "🔻 BAJA"
+                disminucion = precio_actual - prediccion
+                prediccion_texto = f"El precio podría bajar a ${prediccion:,.2f} (${disminucion:,.2f} menos)"
+        else:
+            tendencia = "➖ SIN TENDENCIA CLARA"
+            prediccion_texto = "Se necesita más historial para predecir"
+        
+        # Generar análisis
+        analisis = f"""
+        ### 📊 PREDICCIÓN DE PRECIO
+        
+        ## {tendencia}
+        
+        **{prediccion_texto}**
+        
+        ---
+        
+        ### 📈 Datos actuales:
+        - **Precio actual:** ${df['precio'].iloc[-1]:,.2f}
+        - **Precio más bajo:** ${df['precio'].min():,.2f}
+        - **Precio más alto:** ${df['precio'].max():,.2f}
+        
+        ### 📅 Últimos movimientos:
+        """
+        
+        # Mostrar los últimos 3-5 cambios
+        for idx, row in df.tail(5).iterrows():
+            precio = row.get('precio', 0)
+            cambio = row.get('cambio', 0)
+            fecha = row.get('fecha', '')
+            
+            # Formatear fecha
+            if hasattr(fecha, 'strftime'):
+                fecha_str = fecha.strftime('%d/%m')
+            else:
+                fecha_str = str(fecha)[:10]
+                
+            if pd.notna(cambio) and cambio > 0:
+                analisis += f"- {fecha_str}: ${precio:,.2f} (+${cambio:.2f} ▲)\n"
+            elif pd.notna(cambio) and cambio < 0:
+                analisis += f"- {fecha_str}: ${precio:,.2f} ({cambio:,.2f} ▼)\n"
+            else:
+                analisis += f"- {fecha_str}: ${precio:,.2f} (Mismo precio)\n"
+        
+        # Añadir recomendación basada en la tendencia
+        analisis += "\n💡 **Consejo rápido:** "
+        if "SUBE" in tendencia:
+            analisis += "Si necesitas este producto, podrías considerar comprarlo pronto antes de que el precio aumente más."
+        elif "BAJA" in tendencia:
+            analisis += "Si puedes esperar, el precio podría seguir bajando. Podrías conseguir un mejor precio si esperas un poco más."
+        else:
+            analisis += "El precio parece estable. Si necesitas el producto, es un buen momento para comprar."
+        
+        return analisis
+        
+    except Exception as e:
+        return f"""
+        ### ❌ Error en el análisis
+        
+        No se pudo completar la predicción de tendencia.
+        
+        **Detalles:**
+        ```
+        {str(e)}
+        ```
+        
+        Intenta actualizar los precios y vuelve a intentarlo.
+        """
+    
+    return analisis
 
 # FUNCIONES DE SCRAPING ACTUALIZADAS
 
@@ -1285,35 +1488,19 @@ def main():
                                 time.sleep(1)
                                 st.rerun()
                     
-                    # Botón de análisis de tendencia (sin funcionalidad por ahora)
-                    update_container.markdown(
-                        """
-                        <style>
-                            .gradient-button {
-                                background: linear-gradient(45deg, #4CAF50, #8BC34A);
-                                color: white;
-                                border: none;
-                                padding: 8px 16px;
-                                text-align: center;
-                                text-decoration: none;
-                                display: inline-block;
-                                font-size: 14px;
-                                margin: 4px 2px;
-                                cursor: pointer;
-                                border-radius: 8px;
-                                width: 100%;
-                                transition: all 0.3s ease;
-                                font-weight: 500;
-                            }
-                            .gradient-button:hover {
-                                transform: translateY(-1px);
-                                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-                            }
-                        </style>
-                        <button class='gradient-button'>📊 Analizar tendencia</button>
-                        """,
-                        unsafe_allow_html=True
-                    )
+                    # Botón de análisis de tendencia
+                    if update_container.button(
+                        "📊 Analizar tendencia",
+                        key=f"analizar_{i}",
+                        help="Analizar la tendencia de precios del producto"
+                    ):
+                        with st.spinner("Analizando tendencia..."):
+                            historial = obtener_historial_producto(_supabase, producto['id'])
+                            if len(historial) > 1:
+                                analisis = analizar_tendencia(historial)
+                                st.markdown(analisis, unsafe_allow_html=True)
+                            else:
+                                st.warning("Se necesita más historial de precios para realizar el análisis")
 
                 with col4:
                     # Usar una clave única para el estado de confirmación
@@ -1421,7 +1608,28 @@ def main():
                                 with st.spinner("Generando reporte PDF..."):
                                     # Crear PDF con orientación horizontal para mejor visualización
                                     pdf = FPDF('L', 'mm', 'A4')
+                                    
+                                    # Usar Arial como fuente predeterminada
+                                    use_unicode = False
+                                    
+                                    # Función para manejar texto con caracteres especiales
+                                    def write_text(pdf, text, w=0, h=0, border=0, ln=0, align='', fill=False, link=''):
+                                        if not use_unicode:
+                                            # Reemplazar caracteres especiales si no se usa fuente Unicode
+                                            text = str(text).replace('▲', '↑').replace('▼', '↓')
+                                        # Asegurarse de que align sea un valor válido
+                                        align = align.upper() if isinstance(align, str) else ''
+                                        if align not in ('L', 'C', 'R', 'J'):
+                                            align = ''
+                                        pdf.cell(w, h, str(text), border, ln, align, fill, link)
+                                    
+                                    # Función para establecer la fuente
+                                    def set_font(pdf, style='', size=12):
+                                        pdf.set_font('Arial', style, size)
+                                        pdf.font_size = size
+                                    
                                     pdf.add_page()
+                                    pdf.set_auto_page_break(auto=True, margin=15)
                                     
                                     # Colores pastel
                                     colors = {
@@ -1433,8 +1641,37 @@ def main():
                                         'border': (200, 200, 200)      # Gris claro para bordes
                                     }
                                     
-                                    # Configuración de la página
-                                    pdf.set_auto_page_break(auto=True, margin=15)
+                                    # Función para establecer la fuente con manejo de Unicode
+                                    def set_font(pdf, style='', size=12):
+                                        if use_unicode:
+                                            font = 'DejaVu'
+                                        else:
+                                            font = 'Arial'
+                                        pdf.set_font(font, style, size)
+                                    
+                                    # Función para escribir texto con manejo de caracteres especiales
+                                    def write_text(pdf, text, w=0, h=0, border=0, ln=0, align='', fill=False, link=''):
+                                        # Reemplazar caracteres especiales por texto descriptivo
+                                        text = str(text)
+                                        text = text.replace('▲', '(sube)').replace('↑', '(sube)')
+                                        text = text.replace('▼', '(baja)').replace('↓', '(baja)')
+                                        
+                                        # Asegurarse de que align sea un valor válido
+                                        align = str(align).upper() if align and isinstance(align, str) else ''
+                                        if align not in ('L', 'C', 'R', 'J'):
+                                            align = ''
+                                            
+                                        # Asegurarse de que ln sea un entero válido (0, 1, 2)
+                                        try:
+                                            ln = int(ln)
+                                            if ln not in (0, 1, 2):
+                                                ln = 0
+                                        except (ValueError, TypeError):
+                                            ln = 0
+                                            
+                                        # Usar Arial como fuente predeterminada
+                                        pdf.set_font('Arial', size=pdf.font_size)
+                                        pdf.cell(w=w, h=h, txt=text, border=border, ln=ln, align=align, fill=fill, link=link)
                                     
                                     # Función para dibujar un rectángulo redondeado
                                     def rounded_rect(x, y, w, h, r, color, fill=True):
@@ -1449,23 +1686,33 @@ def main():
                                         pdf.rect(x + r, y, w - d, h, 'F' if fill else 'D')
                                         pdf.rect(x, y + r, w, h - d, 'F' if fill else 'D')
                                     
+                                    # Colores pastel
+                                    colors = {
+                                        'background': (240, 248, 255),  # Azul claro
+                                        'header': (173, 216, 230),     # Azul pastel
+                                        'accent1': (255, 218, 185),    # Durazno pastel
+                                        'accent2': (221, 255, 221),    # Verde menta pastel
+                                        'text': (51, 51, 51),          # Gris oscuro para texto
+                                        'border': (200, 200, 200)      # Gris claro para bordes
+                                    }
+                                    
                                     # Fondo de la página
                                     pdf.set_fill_color(*colors['background'])
                                     pdf.rect(0, 0, 297, 210, 'F')  # A4 en horizontal: 297x210mm
                                     
                                     # Encabezado con degradado
-                                    pdf.set_font('Arial', 'B', 20)
+                                    set_font(pdf, 'B', 16)
                                     pdf.set_text_color(*colors['text'])
                                     pdf.set_draw_color(*colors['header'])
                                     pdf.set_fill_color(200, 230, 255)  # Azul pastel más claro
                                     pdf.rect(0, 0, 297, 30, 'F')
-                                    pdf.set_xy(0, 5)
-                                    pdf.cell(0, 10, 'Reporte de Precios', 0, 1, 'C')
+                                    pdf.set_xy(0, 10)
+                                    write_text(pdf, 'Reporte de Precios', 0, 10, 0, 1, 'C')
                                     
                                     # Información del producto
                                     pdf.set_font('Arial', 'B', 14)
                                     pdf.set_xy(15, 40)
-                                    pdf.cell(0, 10, 'Información del Producto', 0, 1, 'L')
+                                    write_text(pdf, 'Información del Producto', 0, 10, 0, 1, 'L')
                                     
                                     # Tarjeta de información del producto
                                     pdf.set_draw_color(*colors['border'])
@@ -1473,9 +1720,9 @@ def main():
                                     rounded_rect(15, 55, 260, 40, 5, colors['border'], False)
                                     pdf.rect(15, 55, 260, 40, 'F')
                                     
-                                    pdf.set_font('Arial', '', 12)
+                                    set_font(pdf, '', 12)
                                     pdf.set_xy(20, 60)
-                                    pdf.multi_cell(250, 8, producto["titulo"], 0, 'L')
+                                    write_text(pdf, producto["titulo"], 250, 8, 0, 'L')
                                     
                                     # Precios en tarjetas pequeñas
                                     box_width = 80
@@ -1485,21 +1732,21 @@ def main():
                                     pdf.set_fill_color(*colors['accent1'])
                                     rounded_rect(15, 105, box_width, box_height, 5, colors['accent1'])
                                     pdf.set_xy(15, 110)
-                                    pdf.set_font('Arial', 'B', 10)
-                                    pdf.cell(box_width, 5, 'Precio Actual', 0, 1, 'C')
-                                    pdf.set_font('Arial', 'B', 16)
+                                    set_font(pdf, 'B', 10)
+                                    write_text(pdf, 'Precio Actual', box_width, 5, 0, 1, 'C')
+                                    set_font(pdf, 'B', 16)
                                     pdf.set_xy(15, 118)
-                                    pdf.cell(box_width, 5, f'${producto["precio_actual"]:,.2f}', 0, 1, 'C')
+                                    write_text(pdf, f'${producto["precio_actual"]:,.2f}', box_width, 5, 0, 1, 'C')
                                     
                                     # Precio inicial
                                     pdf.set_fill_color(*colors['accent2'])
                                     rounded_rect(105, 105, box_width, box_height, 5, colors['accent2'])
                                     pdf.set_xy(105, 110)
-                                    pdf.set_font('Arial', 'B', 10)
-                                    pdf.cell(box_width, 5, 'Precio Inicial', 0, 1, 'C')
-                                    pdf.set_font('Arial', 'B', 16)
+                                    set_font(pdf, 'B', 10)
+                                    write_text(pdf, 'Precio Inicial', box_width, 5, 0, 1, 'C')
+                                    set_font(pdf, 'B', 16)
                                     pdf.set_xy(105, 118)
-                                    pdf.cell(box_width, 5, f'${producto["precio_inicial"]:,.2f}', 0, 1, 'C')
+                                    write_text(pdf, f'${producto["precio_inicial"]:,.2f}', box_width, 5, 0, 1, 'C')
                                     
                                     # Diferencia
                                     diferencia = producto['precio_actual'] - producto['precio_inicial']
@@ -1509,16 +1756,16 @@ def main():
                                     pdf.set_fill_color(*diff_color)
                                     rounded_rect(195, 105, box_width, box_height, 5, diff_color)
                                     pdf.set_xy(195, 110)
-                                    pdf.set_font('Arial', 'B', 10)
-                                    pdf.cell(box_width, 5, 'Variación', 0, 1, 'C')
-                                    pdf.set_font('Arial', 'B', 14)
+                                    set_font(pdf, 'B', 10)
+                                    write_text(pdf, 'Variación', box_width, 5, 0, 1, 'C')
+                                    set_font(pdf, 'B', 14)
                                     pdf.set_xy(195, 118)
                                     if diferencia < 0:
-                                        pdf.cell(box_width, 5, f'▼ ${abs(diferencia):,.2f} ({abs(porcentaje):.1f}%)', 0, 1, 'C')
+                                        write_text(pdf, f'▼ ${abs(diferencia):,.2f} ({abs(porcentaje):.1f}%)', box_width, 5, 0, 1, 'C')
                                     elif diferencia > 0:
-                                        pdf.cell(box_width, 5, f'▲ ${diferencia:,.2f} ({porcentaje:.1f}%)', 0, 1, 'C')
+                                        write_text(pdf, f'▲ ${diferencia:,.2f} ({porcentaje:.1f}%)', box_width, 5, 0, 1, 'C')
                                     else:
-                                        pdf.cell(box_width, 5, 'Sin cambios', 0, 1, 'C')
+                                        write_text(pdf, 'Sin cambios', box_width, 5, 0, 1, 'C')
                                     
                                     # Crear una nueva página para el gráfico
                                     pdf.add_page('L')  # Página en orientación horizontal
@@ -1566,14 +1813,14 @@ def main():
                                     
                                     # Tabla de historial
                                     pdf.add_page()
-                                    pdf.set_font('Arial', 'B', 14)
+                                    set_font(pdf, 'B', 14)
                                     pdf.set_xy(15, 20)
-                                    pdf.cell(0, 10, 'Historial de Precios', 0, 1, 'L')
+                                    write_text(pdf, 'Historial de Precios', 0, 10, 0, 1, 'L')
                                     
                                     # Encabezado de la tabla
                                     pdf.set_fill_color(200, 230, 255)  # Azul pastel para el encabezado
                                     pdf.set_draw_color(*colors['border'])
-                                    pdf.set_font('Arial', 'B', 10)
+                                    set_font(pdf, 'B', 10)
                                     
                                     # Dibujar celdas del encabezado
                                     pdf.set_xy(15, 35)
@@ -1582,7 +1829,7 @@ def main():
                                     pdf.cell(50, 10, 'Cambio', 1, 1, 'C', 1)
                                     
                                     # Filas de la tabla
-                                    pdf.set_font('Arial', '', 9)
+                                    set_font(pdf, '', 9)
                                     
                                     # Ordenar por fecha más reciente primero
                                     df_sorted = df_historial.sort_values('fecha_consulta', ascending=False)
@@ -1594,6 +1841,9 @@ def main():
                                         else:
                                             pdf.set_fill_color(245, 245, 245)  # Gris muy claro
                                         
+                                        # Restaurar color de texto
+                                        pdf.set_text_color(0, 0, 0)  # Negro
+                                        
                                         fecha = pd.to_datetime(row['fecha_consulta']).strftime('%d/%m/%Y %H:%M')
                                         precio = row['precio']
                                         
@@ -1603,10 +1853,10 @@ def main():
                                             precio_anterior = df_sorted.iloc[i + 1]['precio']
                                             dif = precio - precio_anterior
                                             if dif > 0:
-                                                cambio = f"▲ +${dif:,.2f}"
+                                                cambio = f"↑ +${dif:,.2f}"  # Usar flecha ASCII
                                                 pdf.set_text_color(200, 0, 0)  # Rojo para aumento
                                             elif dif < 0:
-                                                cambio = f"▼ ${dif:,.2f}"
+                                                cambio = f"↓ ${dif:,.2f}"  # Usar flecha ASCII
                                                 pdf.set_text_color(0, 150, 0)  # Verde para disminución
                                             else:
                                                 cambio = "="
@@ -1615,37 +1865,54 @@ def main():
                                         pdf.set_xy(15, 45 + (i * 7))
                                         pdf.cell(140, 7, str(fecha), 1, 0, 'L', 1)
                                         pdf.cell(50, 7, f"${precio:,.2f}", 1, 0, 'R', 1)
-                                        pdf.cell(50, 7, cambio, 1, 1, 'C', 1)
+                                        write_text(pdf, cambio, 50, 7, 1, 'C', 1)
                                         pdf.set_text_color(0, 0, 0)  # Restaurar color negro
                                     
                                     # Pie de página
-                                    pdf.set_font('Arial', 'I', 8)
+                                    set_font(pdf, 'I', 8)
                                     pdf.set_text_color(150, 150, 150)
                                     pdf.set_y(-15)
-                                    pdf.cell(0, 10, f'Generado el {datetime.now().strftime("%d/%m/%Y %H:%M")} | Tracker de Precios', 0, 0, 'C')
+                                    write_text(pdf, f'Generado el {datetime.now().strftime("%d/%m/%Y %H:%M")} | Tracker de Precios', 0, 10, 0, 0, 'C')
                                     
-                                    # Guardar PDF temporal
-                                    pdf_output = os.path.join(tempfile.gettempdir(), f'reporte_{producto["id"]}.pdf')
+                                    # Guardar PDF en memoria
+                                    pdf_output = io.BytesIO()
                                     pdf.output(pdf_output)
                                     
-                                    # Crear enlace de descarga
-                                    with open(pdf_output, 'rb') as f:
-                                        pdf_data = f.read()
+                                    # Guardar el PDF en la sesión para usarlo después
+                                    if 'pdf_data' not in st.session_state:
+                                        st.session_state.pdf_data = {}
+                                    
+                                    st.session_state.pdf_data[producto['id']] = pdf_output.getvalue()
+                                    
+                                    # Marcar que el PDF está listo
+                                    st.session_state[f'pdf_ready_{producto["id"]}'] = True
+                                
+                                # Mostrar botones si el PDF está listo
+                                if st.session_state.get(f'pdf_ready_{producto["id"]}', False):
+                                    col1, col2 = st.columns(2)
                                     
                                     # Botón de descarga
-                                    st.download_button(
-                                        label="⬇️ Descargar Reporte PDF",
-                                        data=pdf_data,
-                                        file_name=f"reporte_{producto['id']}.pdf",
-                                        mime='application/pdf'
-                                    )
-                                    
-                                    # Botón para enviar por correo (sin funcionalidad por ahora)
-                                    st.button(
-                                        "📧 Enviar por correo",
-                                        key=f"enviar_correo_{producto['id']}",
-                                            help="Próximamente: Enviar el reporte por correo electrónico"
+                                    with col1:
+                                        st.download_button(
+                                            label="⬇️ Descargar Reporte PDF",
+                                            data=st.session_state.pdf_data.get(producto['id']),
+                                            file_name=f"reporte_{producto['id']}.pdf",
+                                            mime='application/pdf',
+                                            key=f"download_{producto['id']}"
                                         )
+                                    
+                                    # Botón para enviar por correo
+                                    with col2:
+                                        if st.button(
+                                            "📧 Enviar por correo",
+                                            key=f"enviar_correo_{producto['id']}",
+                                            help="Enviar el reporte a rquerevalu@unitru.edu.pe"
+                                        ):
+                                            with st.spinner("Enviando correo a rquerevalu@unitru.edu.pe..."):
+                                                if enviar_por_correo("rquerevalu@unitru.edu.pe", producto, st.session_state.pdf_data[producto['id']]):
+                                                    st.success("✅ Correo enviado correctamente a rquerevalu@unitru.edu.pe")
+                                                else:
+                                                    st.error("❌ Error al enviar el correo")
                                     
                                     # Eliminar archivos temporales
                                     try:
