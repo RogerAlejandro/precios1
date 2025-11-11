@@ -37,6 +37,120 @@ st.set_page_config(
     layout="wide"
 )
 
+# Estilos globales
+st.markdown("""
+    <style>
+        /* Estilos generales */
+        .main {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e6e6e6;
+        }
+        
+        /* Estilos para tarjetas */
+        .card {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 16px;
+            padding: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 1.5rem;
+            transition: all 0.3s ease;
+        }
+        
+        .card:hover {
+            border-color: rgba(110, 69, 226, 0.4);
+            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.2);
+            transform: translateY(-2px);
+        }
+        
+        /* Estilos para botones */
+        .stButton>button {
+            background: linear-gradient(45deg, #6e45e2, #88d3ce);
+            border: none;
+            color: white;
+            padding: 0.5rem 1.5rem;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 0.9rem;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        .stButton>button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        
+        /* Estilos para inputs */
+        .stTextInput>div>div>input {
+            background: rgba(17, 24, 39, 0.3) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            color: white !important;
+            border-radius: 12px !important;
+            padding: 0.75rem 1rem !important;
+        }
+        
+        .stTextInput>div>div>input:focus {
+            border-color: #6e45e2 !important;
+            box-shadow: 0 0 0 2px rgba(110, 69, 226, 0.2) !important;
+        }
+        
+        /* Estilos para pestañas */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 8px;
+        }
+        
+        .stTabs [data-baseweb="tab"] {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px !important;
+            padding: 0.5rem 1.5rem;
+            margin: 0 2px;
+            transition: all 0.3s ease;
+        }
+        
+        .stTabs [data-baseweb="tab"]:hover {
+            background: rgba(110, 69, 226, 0.2);
+        }
+        
+        .stTabs [aria-selected="true"] {
+            background: linear-gradient(45deg, #6e45e2, #88d3ce) !important;
+            color: white !important;
+        }
+        
+        /* Estilos para la barra lateral */
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%) !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Estilos para títulos */
+        h1, h2, h3 {
+            color: #f0f0f0;
+        }
+        
+        /* Estilos para tablas */
+        .stDataFrame {
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        
+        /* Estilos para los mensajes de estado */
+        .status-message {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 0.5rem 1rem;
+            margin: 0.25rem 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # Intentar importar supabase con manejo de errores
 SUPABASE_AVAILABLE = False
 supabase_client = None
@@ -986,82 +1100,16 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Sección de notificaciones por correo compacta
+    # Sección de notificaciones por correo con nuevo diseño
     with st.container():
         st.markdown("""
-        <style>
-            .email-container {
-                display: flex;
-                align-items: center;
-                gap: 1rem;
-                margin: 0.5rem 0;
-                padding: 0.5rem 0;
-            }
-            .email-label {
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-                color: #94a3b8;
-                font-size: 0.9rem;
-                white-space: nowrap;
-            }
-            .email-input-compact {
-                flex-grow: 1;
-                background: rgba(17, 24, 39, 0.3) !important;
-                border: 1px solid rgba(255, 255, 255, 0.1) !important;
-                color: white !important;
-                border-radius: 8px !important;
-                padding: 0.5rem 0.75rem !important;
-                height: 38px !important;
-                font-size: 0.9rem !important;
-            }
-            .email-btn {
-                background: linear-gradient(45deg, #6e45e2, #88d3ce) !important;
-                border: none !important;
-                border-radius: 8px !important;
-                padding: 0.5rem 1rem !important;
-                height: 38px !important;
-                font-size: 0.9rem !important;
-                white-space: nowrap;
-            }
-            .email-btn:hover {
-                transform: translateY(-1px);
-                box-shadow: 0 2px 5px rgba(110, 69, 226, 0.2) !important;
-            }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        # Fila de correo electrónico con alineación mejorada
-        st.markdown("""
-        <style>
-            .email-row {
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
-                margin: 0.5rem 0;
-            }
-            .email-input-wrapper {
-                flex-grow: 1;
-                display: flex;
-                align-items: center;
-                gap: 0.75rem;
-            }
-            .email-label {
-                display: flex;
-                align-items: center;
-                gap: 0.5rem;
-                color: #94a3b8;
-                font-size: 0.9rem;
-                white-space: nowrap;
-            }
-        </style>
-        <div class="email-row">
-            <div class="email-input-wrapper">
-                <span class="email-label">
-                    <span>📧</span>
-                    <span>Notificaciones:</span>
-                </span>
-                <div style="flex-grow: 1;">
+        <div class="card" style="padding: 1rem 1.5rem;">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="display: flex; align-items: center; gap: 0.75rem; flex-grow: 1;">
+                    <div style="background: rgba(110, 69, 226, 0.15); width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+                        <span style="font-size: 1.2rem;">📧</span>
+                    </div>
+                    <div style="flex-grow: 1;">
         """, unsafe_allow_html=True)
         
         # Campo de correo
@@ -1073,9 +1121,9 @@ def main():
         )
         
         st.markdown("""
+                    </div>
                 </div>
-            </div>
-            <div style="margin-left: auto;">
+                <div style="margin-left: auto; align-self: flex-end;">
         """, unsafe_allow_html=True)
         
         # Botón de guardar
@@ -1086,6 +1134,10 @@ def main():
         )
         
         st.markdown("""
+                </div>
+            </div>
+            <div style="margin-top: 0.5rem; color: #94a3b8; font-size: 0.85rem;">
+                Recibe notificaciones cuando los precios bajen
             </div>
         </div>
         """, unsafe_allow_html=True)
