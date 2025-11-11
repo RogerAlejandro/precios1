@@ -1275,11 +1275,45 @@ def main():
                         st.info("➡️ Sin cambios")
 
                 with col3:
-                    if st.button("🔄 Actualizar", key=f"actualizar_{i}"):
+                    # Contenedor para los botones de actualización
+                    update_container = st.container()
+                    
+                    # Botón de actualizar
+                    if update_container.button("🔄 Actualizar ahora", key=f"actualizar_{i}"):
                         with st.spinner("Actualizando precio..."):
                             if actualizar_precio_producto(_supabase, producto):
                                 time.sleep(1)
                                 st.rerun()
+                    
+                    # Botón de análisis de tendencia (sin funcionalidad por ahora)
+                    update_container.markdown(
+                        """
+                        <style>
+                            .gradient-button {
+                                background: linear-gradient(45deg, #4CAF50, #8BC34A);
+                                color: white;
+                                border: none;
+                                padding: 8px 16px;
+                                text-align: center;
+                                text-decoration: none;
+                                display: inline-block;
+                                font-size: 14px;
+                                margin: 4px 2px;
+                                cursor: pointer;
+                                border-radius: 8px;
+                                width: 100%;
+                                transition: all 0.3s ease;
+                                font-weight: 500;
+                            }
+                            .gradient-button:hover {
+                                transform: translateY(-1px);
+                                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                            }
+                        </style>
+                        <button class='gradient-button'>📊 Analizar tendencia</button>
+                        """,
+                        unsafe_allow_html=True
+                    )
 
                 with col4:
                     # Usar una clave única para el estado de confirmación
