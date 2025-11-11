@@ -44,7 +44,6 @@ supabase_client = None
 try:
     from supabase import create_client
     SUPABASE_AVAILABLE = True
-    st.success("✅ Supabase disponible")
 except ImportError as e:
     st.error(f"❌ Error importando Supabase: {e}")
 
@@ -53,30 +52,49 @@ except ImportError as e:
 
 @st.cache_resource
 def init_supabase():
+    # Crear un contenedor para los mensajes de estado
+    status_container = st.container()
+    
     if not SUPABASE_AVAILABLE:
-        st.error("❌ Supabase no está disponible")
+        with status_container:
+            st.error("❌ Supabase no está disponible")
         return None
 
     try:
         if "supabase" not in st.secrets:
-            st.error("❌ No se encontró la sección 'supabase' en secrets.toml")
+            with status_container:
+                st.error("❌ No se encontró la sección 'supabase' en secrets.toml")
             return None
 
         supabase_url = st.secrets["supabase"]["SUPABASE_URL"]
         supabase_key = st.secrets["supabase"]["SUPABASE_KEY"]
 
         if not supabase_url or not supabase_key:
-            st.error("❌ URL o KEY de Supabase están vacíos")
+            with status_container:
+                st.error("❌ URL o KEY de Supabase están vacíos")
             return None
 
-        st.success("✅ Credenciales de Supabase cargadas correctamente")
-
-        client = create_client(supabase_url, supabase_key)
-        st.success("✅ Cliente Supabase creado")
+        # Mostrar los tres estados juntos
+        with status_container:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.success("✅ Supabase disponible")
+            with col2:
+                st.success("✅ Credenciales válidas")
+            
+            client = create_client(supabase_url, supabase_key)
+            
+            with col3:
+                st.success("✅ Cliente creado")
+            
+            # Añadir un poco de espacio después de los mensajes
+            st.markdown("<div style='margin-bottom: 1rem;'></div>", unsafe_allow_html=True)
+            
         return client
 
     except Exception as e:
-        st.error(f"❌ Error inicializando Supabase: {str(e)}")
+        with status_container:
+            st.error(f"❌ Error inicializando Supabase: {str(e)}")
         return None
 
 # Funciones de base de datos (se mantienen igual)
@@ -958,7 +976,141 @@ def mostrar_producto_busqueda(producto, key_suffix, _supabase):
 
 
 def main():
-    st.title("🛒 Tracker de Precios")
+    # Título principal con estilo
+    st.markdown("""
+    <div style='margin-bottom: 1.5rem;'>
+        <h1 style='margin: 0; padding: 0; font-size: 2.5rem; background: linear-gradient(45deg, #6e45e2, #88d3ce); -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>
+            🛒 Tracker de Precios
+        </h1>
+        <p style='margin: 0.5rem 0 0; color: #94a3b8; font-size: 1.1rem;'>Busca productos y haz seguimiento de sus precios</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sección de notificaciones por correo compacta
+    with st.container():
+        st.markdown("""
+        <style>
+            .email-container {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                margin: 0.5rem 0;
+                padding: 0.5rem 0;
+            }
+            .email-label {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                color: #94a3b8;
+                font-size: 0.9rem;
+                white-space: nowrap;
+            }
+            .email-input-compact {
+                flex-grow: 1;
+                background: rgba(17, 24, 39, 0.3) !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                color: white !important;
+                border-radius: 8px !important;
+                padding: 0.5rem 0.75rem !important;
+                height: 38px !important;
+                font-size: 0.9rem !important;
+            }
+            .email-btn {
+                background: linear-gradient(45deg, #6e45e2, #88d3ce) !important;
+                border: none !important;
+                border-radius: 8px !important;
+                padding: 0.5rem 1rem !important;
+                height: 38px !important;
+                font-size: 0.9rem !important;
+                white-space: nowrap;
+            }
+            .email-btn:hover {
+                transform: translateY(-1px);
+                box-shadow: 0 2px 5px rgba(110, 69, 226, 0.2) !important;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Fila de correo electrónico con alineación mejorada
+        st.markdown("""
+        <style>
+            .email-row {
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+                margin: 0.5rem 0;
+            }
+            .email-input-wrapper {
+                flex-grow: 1;
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+            }
+            .email-label {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                color: #94a3b8;
+                font-size: 0.9rem;
+                white-space: nowrap;
+            }
+        </style>
+        <div class="email-row">
+            <div class="email-input-wrapper">
+                <span class="email-label">
+                    <span>📧</span>
+                    <span>Notificaciones:</span>
+                </span>
+                <div style="flex-grow: 1;">
+        """, unsafe_allow_html=True)
+        
+        # Campo de correo
+        email = st.text_input(
+            label="Correo electrónico",
+            placeholder="tucorreo@ejemplo.com",
+            key="email_notificaciones",
+            label_visibility="collapsed"
+        )
+        
+        st.markdown("""
+                </div>
+            </div>
+            <div style="margin-left: auto;">
+        """, unsafe_allow_html=True)
+        
+        # Botón de guardar
+        guardar_correo = st.button(
+            "💾 Guardar correo",
+            key="btn_guardar_correo",
+            help="Guardar dirección de correo para notificaciones"
+        )
+        
+        st.markdown("""
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Aplicar estilos a los inputs
+        st.markdown("""
+        <style>
+            div[data-testid='stTextInput'] > div > div > input {
+                background: rgba(17, 24, 39, 0.3) !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                color: white !important;
+                border-radius: 8px !important;
+                padding: 0.5rem 0.75rem !important;
+                height: 38px !important;
+            }
+            button[data-testid='baseButton-secondary'] {
+                background: linear-gradient(45deg, #6e45e2, #88d3ce) !important;
+                border: none !important;
+                border-radius: 8px !important;
+                height: 38px !important;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("<div style='margin: 1rem 0; height: 1px; background: rgba(255, 255, 255, 0.05);'></div>", unsafe_allow_html=True)
     st.markdown("Busca productos y haz seguimiento de sus precios")
 
     # Guardar query en session_state
@@ -1375,13 +1527,20 @@ def main():
                                     with open(pdf_output, 'rb') as f:
                                         pdf_data = f.read()
                                     
-                                    # Crear botón de descarga
+                                    # Botón de descarga
                                     st.download_button(
                                         label="⬇️ Descargar Reporte PDF",
                                         data=pdf_data,
                                         file_name=f"reporte_{producto['id']}.pdf",
                                         mime='application/pdf'
                                     )
+                                    
+                                    # Botón para enviar por correo (sin funcionalidad por ahora)
+                                    st.button(
+                                        "📧 Enviar por correo",
+                                        key=f"enviar_correo_{producto['id']}",
+                                            help="Próximamente: Enviar el reporte por correo electrónico"
+                                        )
                                     
                                     # Eliminar archivos temporales
                                     try:
