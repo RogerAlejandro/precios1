@@ -34,49 +34,272 @@ warnings.filterwarnings('ignore')
 st.set_page_config(
     page_title="Tracker de Precios",
     page_icon="🛒",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
+
+# Estilos CSS personalizados
+st.markdown("""
+<style>
+    /* Estilos generales */
+    .main {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        color: #e6e6e6;
+    }
+    
+    /* Títulos */
+    h1, h2, h3, h4, h5, h6 {
+        color: #f8f8f8 !important;
+        font-weight: 700 !important;
+        margin-bottom: 1rem !important;
+        text-shadow: 1px 1px 3px rgba(0,0,0,0.3);
+    }
+    
+    /* Botones */
+    .stButton>button {
+        background: linear-gradient(135deg, #6e45e2 0%, #88d3ce 100%);
+        color: #1a1a1a !important;
+        font-weight: 600;
+        border: none;
+        border-radius: 12px;
+        padding: 0.6rem 1.8rem;
+        transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        letter-spacing: 0.5px;
+    }
+    
+    .stButton>button:hover {
+        transform: translateY(-3px) scale(1.02);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+        background: linear-gradient(135deg, #7d5fff 0%, #98e8e1 100%);
+    }
+    
+    /* Tarjetas de productos */
+    .product-card {
+        background: rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(10px);
+        border-radius: 16px;
+        padding: 1.8rem;
+        margin-bottom: 1.8rem;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+        transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .product-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, #6e45e2 0%, #88d3ce 100%);
+    }
+    
+    .product-card:hover {
+        transform: translateY(-8px) scale(1.01);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+        background: rgba(255, 255, 255, 0.12);
+    }
+    
+    /* Precios */
+    .price {
+        font-size: 1.6rem;
+        font-weight: 800;
+        background: linear-gradient(90deg, #6e45e2 0%, #88d3ce 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin: 0.8rem 0;
+        display: inline-block;
+        text-shadow: 1px 1px 3px rgba(0,0,0,0.2);
+    }
+    
+    /* Barra lateral */
+    .css-1d391kg, .css-1v3fvcr {
+        background: linear-gradient(180deg, #0f0c29 0%, #1a1a2e 100%) !important;
+        color: #f0f0f0 !important;
+        padding: 2.5rem 1.8rem !important;
+        border-right: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    /* Inputs */
+    .stTextInput>div>div>input, 
+    .stNumberInput>div>div>input,
+    .stSelectbox>div>div>div>div>div {
+        background-color: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 12px !important;
+        padding: 0.7rem 1.2rem !important;
+        color: #f0f0f0 !important;
+        transition: all 0.3s ease;
+    }
+    
+    .stTextInput>div>div>input:focus, 
+    .stNumberInput>div>div>input:focus {
+        border-color: #6e45e2 !important;
+        box-shadow: 0 0 0 2px rgba(110, 69, 226, 0.2) !important;
+    }
+    
+    /* Pestañas */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+        margin-bottom: 2rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        padding-bottom: 8px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px 8px 0 0;
+        padding: 0.8rem 1.8rem;
+        margin-right: 6px;
+        transition: all 0.3s ease;
+        color: rgba(255, 255, 255, 0.7);
+        font-weight: 500;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, rgba(110, 69, 226, 0.2) 0%, rgba(136, 211, 206, 0.2) 100%);
+        color: #fff !important;
+        border-bottom: 3px solid #6e45e2;
+    }
+    
+    /* Mensajes de éxito y error */
+    .stAlert {
+        border-radius: 12px;
+        padding: 1.2rem;
+        background: rgba(255, 255, 255, 0.08) !important;
+        border-left: 4px solid #6e45e2;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Footer */
+    .footer {
+        margin-top: 4rem;
+        padding: 2rem;
+        text-align: center;
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 0.9rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    /* Scrollbar personalizada */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.1);
+        border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: linear-gradient(135deg, #6e45e2 0%, #88d3ce 100%);
+        border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(135deg, #7d5fff 0%, #98e8e1 100%);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Estilo para los badges de estado
+st.markdown("""
+<style>
+    .status-badge {
+        display: inline-block;
+        padding: 0.35rem 0.75rem;
+        margin: 0 0.5rem 0.5rem 0;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        background: rgba(46, 204, 113, 0.15);
+        color: #2ecc71;
+        border: 1px solid rgba(46, 204, 113, 0.3);
+    }
+    .status-badge.error {
+        background: rgba(231, 76, 60, 0.15);
+        color: #e74c3c;
+        border-color: rgba(231, 76, 60, 0.3);
+    }
+    .status-badge.warning {
+        background: rgba(241, 196, 15, 0.15);
+        color: #f1c40f;
+        border-color: rgba(241, 196, 15, 0.3);
+    }
+    .status-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+        align-items: center;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Intentar importar supabase con manejo de errores
 SUPABASE_AVAILABLE = False
 supabase_client = None
 
-try:
-    from supabase import create_client
-    SUPABASE_AVAILABLE = True
-    st.success("✅ Supabase disponible")
-except ImportError as e:
-    st.error(f"❌ Error importando Supabase: {e}")
+# Contenedor para los mensajes de estado
+status_container = st.container()
+
+with status_container:
+    status_cols = st.columns(3)
+    
+    with status_cols[0]:
+        try:
+            from supabase import create_client
+            SUPABASE_AVAILABLE = True
+            st.markdown('<div class="status-badge">✅ Supabase disponible</div>', unsafe_allow_html=True)
+        except ImportError as e:
+            st.markdown(f'<div class="status-badge error">❌ Error importando Supabase</div>', unsafe_allow_html=True)
 
 # Configuración de Supabase
-
-
 @st.cache_resource
 def init_supabase():
     if not SUPABASE_AVAILABLE:
-        st.error("❌ Supabase no está disponible")
+        with status_container:
+            with status_cols[1]:
+                st.markdown('<div class="status-badge error">❌ Supabase no disponible</div>', unsafe_allow_html=True)
         return None
 
     try:
         if "supabase" not in st.secrets:
-            st.error("❌ No se encontró la sección 'supabase' en secrets.toml")
+            with status_container:
+                with status_cols[1]:
+                    st.markdown('<div class="status-badge error">❌ Falta config. en secrets.toml</div>', unsafe_allow_html=True)
             return None
 
         supabase_url = st.secrets["supabase"]["SUPABASE_URL"]
         supabase_key = st.secrets["supabase"]["SUPABASE_KEY"]
 
         if not supabase_url or not supabase_key:
-            st.error("❌ URL o KEY de Supabase están vacíos")
+            with status_container:
+                with status_cols[1]:
+                    st.markdown('<div class="status-badge error">❌ Credenciales vacías</div>', unsafe_allow_html=True)
             return None
 
-        st.success("✅ Credenciales de Supabase cargadas correctamente")
+        with status_container:
+            with status_cols[1]:
+                st.markdown('<div class="status-badge">✅ Credenciales válidas</div>', unsafe_allow_html=True)
 
         client = create_client(supabase_url, supabase_key)
-        st.success("✅ Cliente Supabase creado")
+        
+        with status_container:
+            with status_cols[2]:
+                st.markdown('<div class="status-badge">✅ Cliente creado</div>', unsafe_allow_html=True)
+                
         return client
 
     except Exception as e:
-        st.error(f"❌ Error inicializando Supabase: {str(e)}")
+        with status_container:
+            with status_cols[2]:
+                st.markdown(f'<div class="status-badge error">❌ Error en conexión</div>', unsafe_allow_html=True)
         return None
 
 # Funciones de base de datos (se mantienen igual)
@@ -918,43 +1141,94 @@ def buscar_ebay(query, max_productos=5):
 
 
 def mostrar_producto_busqueda(producto, key_suffix, _supabase):
-    """Mostrar un producto en una tarjeta de búsqueda"""
-    col1, col2, col3 = st.columns([1, 2, 1])
-
-    with col1:
-        if producto['imagen']:
-            st.image(producto['imagen'], width=100, use_container_width=True)
-        else:
-            st.write("📷 Sin imagen")
-
-    with col2:
-        st.write(f"**{producto['titulo']}**")
-        st.write(f"**Precio:** ${producto['precio']:,.2f}")
-        st.write(f"**Tienda:** {producto['tienda']}")
-        st.write(f"**Fecha:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-
-    with col3:
-        if st.button("📊 Seguir precio", key=f"seguir_{key_suffix}"):
-            if _supabase:
-                with st.spinner('Guardando producto...'):
-                    try:
-                        producto_id = guardar_producto_supabase(
-                            _supabase, producto)
-                        if producto_id:
-                            st.success("✅ Producto agregado para seguimiento!")
-                            # Limpiar resultados de búsqueda
-                            if 'resultados' in st.session_state:
-                                del st.session_state.resultados
-                            st.rerun()
-                        else:
-                            st.error("❌ Error al guardar el producto")
-                    except Exception as e:
-                        st.error(f"❌ Error: {str(e)}")
-            else:
-                st.error("❌ No hay conexión a la base de datos")
-
-        if producto['enlace'] != "#":
-            st.markdown(f"[🔗 Ver producto]({producto['enlace']})")
+    """Mostrar un producto en una tarjeta de búsqueda con diseño mejorado"""
+    with st.container():
+        # Usar HTML personalizado para la tarjeta con mejor diseño
+        card_html = f"""
+        <div class='product-card' style='position: relative; overflow: hidden;'>
+            <div style='display: flex; gap: 1.5rem; align-items: flex-start;'>
+                <!-- Imagen del producto -->
+                <div style='flex: 0 0 140px;'>
+                    <div style='width: 100%; height: 140px; background: rgba(255,255,255,0.05); 
+                                border-radius: 12px; overflow: hidden; display: flex; 
+                                align-items: center; justify-content: center;'>
+                        <img src='{producto['imagen'] if producto['imagen'] else 'https://via.placeholder.com/140x140?text=Sin+imagen'}' 
+                             style='max-width: 100%; max-height: 100%; object-fit: contain;' 
+                             alt='{producto['titulo']}'>
+                    </div>
+                </div>
+                
+                <!-- Información del producto -->
+                <div style='flex: 1;'>
+                    <h4 style='margin: 0 0 0.5rem 0; color: #f0f0f0;'>{producto['titulo']}</h4>
+                    
+                    <div style='display: flex; gap: 1rem; margin-bottom: 0.75rem;'>
+                        <div style='background: rgba(110, 69, 226, 0.15); padding: 0.25rem 0.75rem; 
+                                    border-radius: 20px; font-size: 0.85rem; color: #b39ddb; 
+                                    display: inline-flex; align-items: center;'>
+                            <span style='margin-right: 4px;'>🏪</span> {producto['tienda']}
+                        </div>
+                        <div style='background: rgba(100, 221, 192, 0.15); padding: 0.25rem 0.75rem; 
+                                    border-radius: 20px; font-size: 0.85rem; color: #80cbc4; 
+                                    display: inline-flex; align-items: center;'>
+                            <span style='margin-right: 4px;'>🕒</span> {datetime.now().strftime('%d/%m %H:%M')}
+                        </div>
+                    </div>
+                    
+                    <div style='margin: 1rem 0;'>
+                        <div class='price' style='font-size: 1.8rem; margin: 0.5rem 0;'>
+                            {producto['precio_formateado'] if 'precio_formateado' in producto else f"${producto['precio']:,.2f}"}
+                        </div>
+                    </div>
+                    
+                    <div style='display: flex; gap: 1rem; margin-top: 1.5rem;'>
+                        <button class='stButton' 
+                                onclick='window.open("{producto['enlace']}", "_blank")' 
+                                style='background: linear-gradient(135deg, #6e45e2 0%, #88d3ce 100%); 
+                                       border: none; color: #1a1a1a; padding: 0.5rem 1.25rem; 
+                                       border-radius: 8px; cursor: pointer; font-weight: 600; 
+                                       transition: all 0.3s ease; display: inline-flex; 
+                                       align-items: center; gap: 6px;'>
+                            <span>🔍</span> Ver producto
+                        </button>
+                        
+                        <button class='stButton' 
+                                onclick='document.getElementById("seguir_{key_suffix}").click()' 
+                                style='background: rgba(255, 255, 255, 0.1); 
+                                       border: 1px solid rgba(255, 255, 255, 0.2); 
+                                       color: #fff; padding: 0.5rem 1.25rem; 
+                                       border-radius: 8px; cursor: pointer; font-weight: 600; 
+                                       transition: all 0.3s ease; display: inline-flex; 
+                                       align-items: center; gap: 6px;'>
+                            <span>📊</span> Seguir precio
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
+        
+        # Mostrar la tarjeta
+        st.markdown(card_html, unsafe_allow_html=True)
+        
+        # Botón oculto para manejar la acción de seguir precio
+        if st.button("Seguir precio", key=f"seguir_{key_suffix}", type="primary", use_container_width=True, 
+                    style="display: none;" if _supabase else None):
+            with st.spinner('Guardando producto...'):
+                try:
+                    producto_id = guardar_producto_supabase(_supabase, producto)
+                    if producto_id:
+                        st.success("✅ Producto agregado para seguimiento!")
+                        if 'resultados' in st.session_state:
+                            del st.session_state.resultados
+                        st.rerun()
+                    else:
+                        st.error("❌ Error al guardar el producto")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+        
+        # Espaciador
+        st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
 
 
 def main():
@@ -1429,4 +1703,24 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        
+        # Agregar un footer con información adicional
+        st.markdown("""
+        <div class='footer'>
+            <hr style='border: 0; height: 1px; background: #e0e0e0; margin: 2rem 0 1rem 0;'/>
+            <div style='display: flex; justify-content: space-between; align-items: center;'>
+                <div>© 2023 Buscador de Precios - Todos los derechos reservados</div>
+                <div style='display: flex; gap: 1rem;'>
+                    <a href='#' style='color: #7f8c8d; text-decoration: none;'>Términos de uso</a>
+                    <a href='#' style='color: #7f8c8d; text-decoration: none;'>Política de privacidad</a>
+                    <a href='#' style='color: #7f8c8d; text-decoration: none;'>Contacto</a>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.error("¡Ups! Ha ocurrido un error inesperado. Por favor, recarga la página e inténtalo de nuevo.")
+        st.error(f"Detalles del error: {str(e)}")
