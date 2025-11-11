@@ -1282,10 +1282,29 @@ def main():
                                 st.rerun()
 
                 with col4:
-                    if st.button("❌ Eliminar", key=f"eliminar_{i}"):
-                        if eliminar_producto(_supabase, producto['id']):
-                            st.success("✅ Producto eliminado!")
-                            time.sleep(1)
+                    # Usar una clave única para el estado de confirmación
+                    confirm_key = f"confirm_delete_{i}"
+                    
+                    # Si ya se ha confirmado la eliminación
+                    if st.session_state.get(confirm_key, False):
+                        if st.button(f"⚠️ ¿Eliminar {producto['titulo'][:15]}...?", 
+                                  type="primary", 
+                                  key=f"confirm_{i}"):
+                            if eliminar_producto(_supabase, producto['id']):
+                                # Limpiar el estado de confirmación
+                                st.session_state[confirm_key] = False
+                                st.success("✅ Producto eliminado!")
+                                time.sleep(1)
+                                st.rerun()
+                        
+                        # Botón para cancelar
+                        if st.button("❌ Cancelar", key=f"cancel_{i}"):
+                            st.session_state[confirm_key] = False
+                            st.rerun()
+                    else:
+                        # Mostrar botón de eliminar normal
+                        if st.button("🗑️ Eliminar", key=f"delete_{i}"):
+                            st.session_state[confirm_key] = True
                             st.rerun()
 
                 # Gráfico de historial de precios
