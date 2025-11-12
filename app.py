@@ -1889,26 +1889,61 @@ def main():
                                 
                                 # Mostrar botones si el PDF está listo
                                 if st.session_state.get(f'pdf_ready_{producto["id"]}', False):
+                                    # Función para enviar PDF al webhook
+                                    def enviar_a_webhook(pdf_bytes, producto_id):
+                                        webhook_url = "http://localhost:5678/webhook-test/webhook-test/tu-webhook-secreto"
+                                        files = {
+                                            'file': (f'reporte_{producto_id}.pdf', pdf_bytes, 'application/pdf')
+                                        }
+                                        try:
+                                            response = requests.post(webhook_url, files=files)
+                                            response.raise_for_status()
+                                            st.success("✅ PDF enviado al webhook exitosamente")
+                                            return True
+                                        except Exception as e:
+                                            st.error(f"❌ Error al enviar al webhook: {str(e)}")
+                                            return False
+                                    
+                                    # Crear columnas para los botones
                                     col1, col2 = st.columns(2)
                                     
                                     # Botón de descarga
                                     with col1:
                                         st.download_button(
-                                            label="⬇️ Descargar Reporte PDF",
+                                            label="⬇️ Descargar PDF",
                                             data=st.session_state.pdf_data.get(producto['id']),
                                             file_name=f"reporte_{producto['id']}.pdf",
                                             mime='application/pdf',
                                             key=f"download_{producto['id']}"
                                         )
                                     
-                                    # Botón para enviar por correo
+                                    # Función para enviar PDF al webhook
+                                    def enviar_a_webhook(pdf_bytes, producto_id):
+                                        webhook_url = "http://localhost:5678/webhook-test/webhook-test/tu-webhook-secreto"
+                                        files = {
+                                            'file': (f'reporte_{producto_id}.pdf', pdf_bytes, 'application/pdf')
+                                        }
+                                        try:
+                                            response = requests.post(webhook_url, files=files)
+                                            response.raise_for_status()
+                                            return True, "✅ PDF enviado al webhook exitosamente"
+                                        except Exception as e:
+                                            return False, f"❌ Error al enviar al webhook: {str(e)}"
+                                    
+                                    # Botón para enviar por correo y al webhook
                                     with col2:
                                         if st.button(
                                             "📧 Enviar por correo",
                                             key=f"enviar_correo_{producto['id']}",
-                                            help="Enviar el reporte a rquerevalu@unitru.edu.pe"
+                                            help="Enviar el reporte a rquerevalu@unitru.edu.pe y al webhook"
                                         ):
-                                            with st.spinner("Enviando correo a rquerevalu@unitru.edu.pe..."):
+                                            with st.spinner("Enviando correo a rquerevalu@unitru.edu.pe y al webhook..."):
+                                                # Enviar al webhook primero
+                                                webhook_ok, webhook_msg = enviar_a_webhook(st.session_state.pdf_data[producto['id']], producto['id'])
+                                                if not webhook_ok:
+                                                    st.warning(f"Atención: {webhook_msg}")
+                                                
+                                                # Luego enviar por correo
                                                 if enviar_por_correo("rquerevalu@unitru.edu.pe", producto, st.session_state.pdf_data[producto['id']]):
                                                     st.success("✅ Correo enviado correctamente a rquerevalu@unitru.edu.pe")
                                                 else:
