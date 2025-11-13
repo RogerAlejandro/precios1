@@ -18,6 +18,13 @@ import warnings
 import logging
 import plotly.express as px
 import pandas as pd
+from dotenv import load_dotenv
+
+# Cargar variables de entorno
+load_dotenv()
+
+# Obtener la URL del webhook de análisis de tendencia
+TREND_ANALYSIS_WEBHOOK_URL = os.getenv('TREND_ANALYSIS_WEBHOOK_URL')
 import numpy as np
 from fpdf import FPDF
 import tempfile
@@ -1492,13 +1499,104 @@ def main():
                     if update_container.button(
                         "📊 Analizar tendencia",
                         key=f"analizar_{i}",
-                        help="Analizar la tendencia de precios del producto"
+                        help="Analizar la tendencia de precios del producto y enviar datos al servidor de pronóstico"
                     ):
-                        with st.spinner("Analizando tendencia..."):
+                        with st.spinner("Analizando tendencia y enviando datos al servidor..."):
                             historial = obtener_historial_producto(_supabase, producto['id'])
                             if len(historial) > 1:
-                                analisis = analizar_tendencia(historial)
-                                st.markdown(analisis, unsafe_allow_html=True)
+                                # Preparar datos para el webhook
+                                datos_webhook = {
+                                    'producto_id': producto['id'],
+                                    'titulo': producto['titulo'],
+                                    'historial_precios': [{
+                                        'fecha_consulta': str(h['fecha_consulta']),
+                                        'precio': float(h['precio']) if h['precio'] else None,
+                                        'disponibilidad': h.get('disponibilidad', '')
+                                    } for h in historial],
+                                    'fecha_analisis': datetime.now().isoformat()
+                                }
+                                
+                                try:
+                                    # Enviar datos al webhook
+                                    if TREND_ANALYSIS_WEBHOOK_URL:
+                                        response = requests.post(
+                                            TREND_ANALYSIS_WEBHOOK_URL,
+                                            json=datos_webhook,
+                                            headers={'Content-Type': 'application/json'}
+                                        )
+                                        response.raise_for_status()
+                                        
+                                        # Mostrar la respuesta del webhook si existe
+                                        if response.status_code == 200 and response.content:
+                                            try:
+                                                # Intentar obtener la respuesta del webhook
+                                                respuesta_completa = response.json()
+                                                
+                                                # Buscar el texto del análisis en la respuesta
+                                                if isinstance(respuesta_completa, list) and len(respuesta_completa) > 0:
+                                                    # Si es una lista, tomar el primer elemento
+                                                    respuesta_completa = respuesta_completa[0]
+                                                
+                                                # Función para formatear el texto con saltos de línea
+                                                def format_response_text(text):
+                                                    # Convertir a string si no lo es
+                                                    if not isinstance(text, str):
+                                                        text = str(text)
+                                                    # Reemplazar \n con doble salto de línea para markdown
+                                                    text = text.replace('\n', '\n\n')
+                                                    # Convertir listas con asteriscos a formato markdown
+                                                    text = re.sub(r'\*\s+\*\*(.*?):\*\*', r'* **\1:**', text)
+                                                    return text
+                                                
+                                                if isinstance(respuesta_completa, dict):
+                                                    # Buscar en diferentes posibles ubicaciones del texto de análisis
+                                                    response_text = None
+                                                    
+                                                    # Intentar encontrar el texto en diferentes ubicaciones comunes
+                                                    if 'output' in respuesta_completa and isinstance(respuesta_completa['output'], str):
+                                                        response_text = respuesta_completa['output']
+                                                    elif 'json' in respuesta_completa and 'output' in respuesta_completa['json']:
+                                                        response_text = respuesta_completa['json']['output']
+                                                    elif 'text' in respuesta_completa:
+                                                        response_text = respuesta_completa['text']
+                                                    
+                                                    # Si encontramos el texto, mostrarlo formateado
+                                                    if response_text is not None:
+                                                        formatted_text = format_response_text(response_text)
+                                                        st.markdown(formatted_text, unsafe_allow_html=False)
+                                                    else:
+                                                        # Si no encontramos el formato esperado, mostrar la respuesta completa
+                                                        st.text(str(respuesta_completa))
+                                                elif isinstance(respuesta_completa, str):
+                                                    # Si la respuesta es directamente un string
+                                                    formatted_text = format_response_text(respuesta_completa)
+                                                    st.markdown(formatted_text, unsafe_allow_html=False)
+                                                else:
+                                                    # Si no reconocemos el formato, mostrar la respuesta completa
+                                                    st.text(str(respuesta_completa))
+                                            except json.JSONDecodeError:
+                                                # Si no es JSON, mostrar como texto plano
+                                                st.markdown(response.text, unsafe_allow_html=True)
+                                        else:
+                                            st.success("✅ Datos procesados por el servidor")
+                                            
+                                    else:
+                                        st.warning("⚠️ No se configuró la URL del webhook de análisis de tendencia")
+                                        # Si no hay webhook, mostrar análisis local
+                                        analisis = analizar_tendencia(historial)
+                                        st.markdown(analisis, unsafe_allow_html=True)
+                                    
+                                except requests.exceptions.RequestException as e:
+                                    st.error(f"❌ Error de conexión con el servidor de pronóstico: {str(e)}")
+                                    st.info("Mostrando análisis local...")
+                                    # Mostrar análisis local si hay error de conexión
+                                    analisis = analizar_tendencia(historial)
+                                    st.markdown(analisis, unsafe_allow_html=True)
+                                except Exception as e:
+                                    st.error(f"❌ Error inesperado: {str(e)}")
+                                    # Mostrar análisis local en caso de error inesperado
+                                    analisis = analizar_tendencia(historial)
+                                    st.markdown(analisis, unsafe_allow_html=True)
                             else:
                                 st.warning("Se necesita más historial de precios para realizar el análisis")
 
