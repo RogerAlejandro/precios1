@@ -23,8 +23,9 @@ from dotenv import load_dotenv
 # Cargar variables de entorno
 load_dotenv()
 
-# Obtener la URL del webhook de análisis de tendencia
+# Obtener las URLs de los webhooks
 TREND_ANALYSIS_WEBHOOK_URL = os.getenv('TREND_ANALYSIS_WEBHOOK_URL')
+PRICE_UPDATE_WEBHOOK_URL = os.getenv('PRICE_UPDATE_WEBHOOK_URL')
 import numpy as np
 from fpdf import FPDF
 import tempfile
@@ -412,11 +413,45 @@ def eliminar_producto(_supabase, producto_id):
         return False
 
 
-def actualizar_precio_producto(_supabase, producto):
-    """Actualiza el precio de un producto de manera rápida y confiable"""
+def llamar_webhook_actualizacion(producto_id):
+    """Llama al webhook para actualizar el precio de un producto"""
+    if not PRICE_UPDATE_WEBHOOK_URL:
+        st.warning("⚠️ URL del webhook de actualización no configurada")
+        return False
+    
+    try:
+        response = requests.post(
+            PRICE_UPDATE_WEBHOOK_URL,
+            json={"productoId": producto_id},
+            headers={"Content-Type": "application/json"}
+        )
+        response.raise_for_status()
+        return True
+    except Exception as e:
+        st.error(f"❌ Error al llamar al webhook: {str(e)}")
+        return False
+
+def actualizar_precio_producto(_supabase, producto, usar_webhook=True):
+    """Actualiza el precio de un producto de manera rápida y confiable
+    
+    Args:
+        _supabase: Cliente de Supabase
+        producto: Diccionario con los datos del producto
+        usar_webhook: Si es True, usa el webhook para la actualización
+    """
     if not _supabase or not isinstance(producto, dict) or 'id' not in producto:
         st.error("❌ Datos de producto inválidos")
         return False
+    
+    # Usar webhook si está configurado
+    if usar_webhook and PRICE_UPDATE_WEBHOOK_URL:
+        return llamar_webhook_actualizacion(producto['id'])
+    
+    # Método de actualización directa (fallback)
+    return actualizar_precio_directo(_supabase, producto)
+
+def actualizar_precio_directo(_supabase, producto):
+    """Actualiza el precio directamente sin usar webhook"""
 
     try:
         # Usar requests para obtener el HTML directamente (más rápido que Selenium)
